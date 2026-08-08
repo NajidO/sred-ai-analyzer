@@ -10,6 +10,7 @@ MODEL_PATH = BASE_DIR / "sred_classifier.joblib"
 TEST_PATH = BASE_DIR / "data" / "test_examples.csv"
 TRAINING_PATH = BASE_DIR / "data" / "sred_training_data.csv"
 EXPECTED_TRAINING_COLUMNS = ["text", "label"]
+EXPECTED_TEST_COLUMNS = ["text", "expected_label"]
 VALID_LABELS = {"routine", "borderline", "needs_more_info", "strong_sred"}
 
 
@@ -32,6 +33,25 @@ def validate_training_csv():
     return training_df
 
 
+def validate_test_examples_csv():
+    test_df = pd.read_csv(TEST_PATH)
+
+    if list(test_df.columns) != EXPECTED_TEST_COLUMNS:
+        raise ValueError(
+            f"Expected test columns {EXPECTED_TEST_COLUMNS}, "
+            f"found {list(test_df.columns)}"
+        )
+
+    if test_df[EXPECTED_TEST_COLUMNS].isnull().any().any():
+        raise ValueError("Test examples CSV contains blank text or label values.")
+
+    invalid_labels = sorted(set(test_df["expected_label"]) - VALID_LABELS)
+    if invalid_labels:
+        raise ValueError(f"Test examples CSV contains invalid labels: {invalid_labels}")
+
+    return test_df
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -41,7 +61,7 @@ print("Label counts:")
 print(training_df["label"].value_counts().sort_index().to_string())
 
 model = joblib.load(MODEL_PATH)
-df = pd.read_csv(TEST_PATH)
+df = validate_test_examples_csv()
 
 correct = 0
 total = len(df)

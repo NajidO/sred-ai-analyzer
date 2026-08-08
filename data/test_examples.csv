@@ -1,20 +1,27 @@
 text,expected_label
-"The company used an existing AI chatbot platform and configured response templates to answer common customer support questions.",routine
+The company used an existing AI chatbot platform and configured response templates to answer common customer support questions.,routine
 "Existing chatbot models failed to correctly classify technical support requests with domain-specific terminology. The team tested multiple custom preprocessing methods, intent classification models, and confidence scoring approaches. Several approaches produced excessive false positives, and the team learned that combining domain-specific tokenization with threshold tuning improved classification reliability.",strong_sred
-"The team used a standard cloud provider autoscaling feature to increase server capacity during busy periods. They configured CPU-based scaling rules using vendor documentation and monitored the system after deployment.",routine
+The team used a standard cloud provider autoscaling feature to increase server capacity during busy periods. They configured CPU-based scaling rules using vendor documentation and monitored the system after deployment.,routine
 "Standard cloud autoscaling rules failed to prevent service degradation during unpredictable traffic spikes. The team tested predictive scaling methods using historical usage patterns and compared response times, server utilization, and failure rates across multiple iterations.",strong_sred
 "A logistics software company added a delivery route planning feature using an existing mapping API. The team configured driver locations, delivery addresses, and estimated arrival times. The feature allowed dispatchers to view routes and update deliveries from a dashboard.",routine
 "A logistics software company attempted to optimize real-time delivery routing for drivers in dense urban areas. Standard route optimization libraries produced unstable results when live traffic updates, driver availability, vehicle capacity, and changing delivery windows were processed at the same time. The team tested multiple custom heuristics and compared their performance against existing algorithms using simulated and historical delivery data. Several approaches failed because they improved route speed but caused missed delivery windows. The team learned that a hybrid scoring method combining traffic volatility, delivery priority, and vehicle load constraints produced more reliable routing decisions under changing conditions.",strong_sred
-"We improved the backend system.",needs_more_info
-"Improved query performance but the description does not explain whether standard indexing methods were insufficient.",borderline
-
+We improved the backend system.,needs_more_info
+Improved query performance but the description does not explain whether standard indexing methods were insufficient.,borderline
 "The team investigated API timeout issues during peak usage, but the description does not explain what standard methods failed or what experiments were performed.",borderline
-"The company improved reporting speed using existing database queries and dashboard filters.",routine
-"We developed a new AI-powered recommendation system.",needs_more_info
+The company improved reporting speed using existing database queries and dashboard filters.,routine
+We developed a new AI-powered recommendation system.,needs_more_info
 "The team tested multiple recommendation algorithms because standard collaborative filtering methods failed on sparse customer interaction data. They compared precision, recall, and ranking quality across several iterations and learned that hybrid content-based features improved recommendation reliability.",strong_sred
-"The company configured an existing recommendation engine and adjusted business rules to promote certain products.",routine
-"The team redesigned part of the database layer to support growth.",needs_more_info
-"The team compared different indexing and partitioning strategies after standard database methods failed to maintain acceptable write performance under concurrent transaction loads.",strong_sred
-"The company upgraded its database server and increased memory allocation using vendor recommendations.",routine
+The company configured an existing recommendation engine and adjusted business rules to promote certain products.,routine
+The team redesigned part of the database layer to support growth.,needs_more_info
+The team compared different indexing and partitioning strategies after standard database methods failed to maintain acceptable write performance under concurrent transaction loads.,strong_sred
+The company upgraded its database server and increased memory allocation using vendor recommendations.,routine
 "Security settings were changed to improve login performance, but it is unclear whether there was a technological uncertainty or only configuration work.",borderline
-"We enhanced cybersecurity across the platform.",needs_more_info
+We enhanced cybersecurity across the platform.,needs_more_info
+The team improved the mobile app performance and scalability using new engineering approaches.,needs_more_info
+We developed an innovative automation tool for operations and made the workflow more efficient.,needs_more_info
+We used data science techniques to create a smarter forecasting solution for clients.,needs_more_info
+Engineers built a custom analytics module to enhance platform capabilities.,needs_more_info
+"The team tested several database cache settings to reduce page-load delays, but the records do not explain whether standard approaches were insufficient or what technical knowledge was gained.",borderline
+"Developers investigated intermittent file-processing failures under higher volume, but the description does not identify the technological uncertainty, hypotheses, or experiment results.",borderline
+"The team compared several existing speech recognition services for noisy call recordings, but appears to have selected a vendor tool rather than advancing the underlying technology.",borderline
+"Engineers tuned API retry intervals and queue sizes to reduce failed requests, but it is unclear whether this was routine configuration or a systematic investigation of an unknown technical limitation.",borderline
