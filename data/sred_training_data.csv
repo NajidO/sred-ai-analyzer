@@ -1,0 +1,148 @@
+text,label
+Built a dashboard with filters and charts for internal users,routine
+Integrated Stripe payment API into the checkout flow,routine
+Configured user roles and permissions in the admin panel,routine
+Migrated customer records from one database to another using standard scripts,routine
+Updated the website layout and improved mobile responsiveness,routine
+Fixed bugs in the login page and updated error messages,routine
+Created reports using existing business intelligence tools,routine
+Connected the application to a third-party email service,routine
+Added standard authentication using an existing library,routine
+Performed routine database cleanup and removed duplicate records,routine
+Improved database performance by adding indexes,borderline
+Reduced API response time by optimizing queries and caching common results,borderline
+Modified an existing algorithm to handle larger datasets,borderline
+Improved system performance under higher user traffic,borderline
+Tested different database configurations to reduce latency,borderline
+Investigated inconsistent results during data synchronization,borderline
+Adjusted machine learning model parameters to improve accuracy,borderline
+Explored different approaches to process large volumes of sensor data,borderline
+Changed the data pipeline to improve reliability during peak load,borderline
+Tested multiple ways to reduce memory usage in the application,borderline
+"Existing indexing strategies failed under concurrent write loads, so the team tested partitioning, caching, and query redesign",strong_sred
+"Standard OCR libraries failed on low-resolution industrial labels, so the team trained and evaluated multiple preprocessing pipelines",strong_sred
+The team could not determine whether the synchronization system could maintain consistency under high-volume transaction loads,strong_sred
+"Existing machine learning models failed to generalize on noisy domain-specific data, so multiple model architectures were tested",strong_sred
+"Standard encryption libraries caused unacceptable latency, so the team experimented with alternative security architectures",strong_sred
+"The system failed under unpredictable sensor noise, requiring prototype testing of multiple filtering algorithms",strong_sred
+"Known database replication methods were insufficient for the required real-time constraints, so the team tested several custom synchronization designs",strong_sred
+The team developed and tested multiple prototypes to determine whether edge devices could process data within memory and power limitations,strong_sred
+"Existing route optimization methods failed under dynamic traffic conditions, so the team evaluated several custom heuristics",strong_sred
+"Commercial computer vision tools failed to detect defects under variable lighting, so custom image preprocessing and model training were investigated",strong_sred
+We developed a custom platform,needs_more_info
+We used artificial intelligence to improve operations,needs_more_info
+We improved the system using new technology,needs_more_info
+We built a better algorithm,needs_more_info
+The team worked on performance issues,needs_more_info
+We created a new software module for clients,needs_more_info
+We automated the process using machine learning,needs_more_info
+We changed the architecture to make it better,needs_more_info
+We tested some ideas and improved the product,needs_more_info
+We solved several technical problems during development,needs_more_info
+Implemented a standard REST API endpoint using existing framework documentation,routine
+Configured cloud storage permissions for internal users using vendor documentation,routine
+Added a reporting dashboard using existing charting libraries,routine
+Migrated application hosting from one cloud provider to another using standard deployment scripts,routine
+Integrated an existing payment gateway into the checkout system,routine
+Updated authentication flow using a standard OAuth library,routine
+Created automated email notifications using an existing email service API,routine
+Fixed frontend layout bugs and improved page responsiveness,routine
+Set up monitoring alerts using standard cloud platform tools,routine
+Imported historical customer records into a new CRM using standard CSV upload tools,routine
+Improved query performance but the description does not explain whether standard indexing methods were insufficient,borderline
+Tested caching and query changes to reduce latency during peak traffic but results are not clearly documented,borderline
+Investigated intermittent data synchronization issues between services but the uncertainty is not fully described,borderline
+Modified a machine learning model to improve accuracy but the failed approaches and technical learning are unclear,borderline
+Adjusted cloud infrastructure to handle higher load but it is unclear whether this involved technological uncertainty,borderline
+Explored several API retry strategies after timeout issues but the technical limitations are not fully explained,borderline
+Compared different database configurations to improve write performance under load,borderline
+Tested different data pipeline designs to improve reliability during high-volume processing,borderline
+Investigated inconsistent model predictions on noisy input data but the experimental process is incomplete,borderline
+Evaluated different encryption configurations to reduce latency but the advancement is not clearly stated,borderline
+"Standard database indexing and partitioning methods failed to maintain write performance under concurrent transaction loads, so the team tested multiple custom data storage designs and measured throughput across each iteration",strong_sred
+"Existing API retry and queueing mechanisms failed to maintain data consistency during high-volume synchronization, so the team developed and tested several custom reconciliation approaches",strong_sred
+"Standard machine learning models failed to meet the required accuracy threshold on noisy domain-specific data, so the team compared multiple feature engineering methods and model architectures",strong_sred
+"Known encryption approaches introduced unacceptable latency in real-time processing, so the team tested alternative cryptographic workflows and measured security and performance tradeoffs",strong_sred
+"Commercial search libraries failed to return reliable results for misspelled technical product names, so the team experimented with custom tokenization, ranking, and similarity scoring methods",strong_sred
+"Existing event streaming methods caused message duplication and ordering errors under peak load, so the team tested multiple event processing architectures and learned which design reduced inconsistency",strong_sred
+"Standard cloud autoscaling rules failed to handle unpredictable traffic spikes without service degradation, so the team tested predictive scaling methods using historical usage patterns",strong_sred
+"Existing computer vision models failed under variable lighting and low-resolution images, so the team tested preprocessing pipelines and custom training strategies to improve detection reliability",strong_sred
+"Known route optimization libraries produced unstable results when live traffic and delivery constraints changed simultaneously, so the team tested custom heuristics and compared performance against baseline algorithms",strong_sred
+"Standard anomaly detection models generated excessive false positives on sensor data, so the team investigated custom thresholding, feature extraction, and model evaluation methods",strong_sred
+We improved the backend system,needs_more_info
+We used cloud technology to make the application better,needs_more_info
+We built a machine learning solution for customers,needs_more_info
+We solved performance problems in the platform,needs_more_info
+We created a custom data processing module,needs_more_info
+We developed a new algorithm for the product,needs_more_info
+We enhanced system reliability using better architecture,needs_more_info
+We automated client workflows using artificial intelligence,needs_more_info
+We improved cybersecurity in the application,needs_more_info
+We redesigned the database layer to support growth,needs_more_info
+Added a new customer onboarding workflow to improve user experience and reduce manual admin time,routine
+Configured Salesforce fields and permissions to support a new sales process,routine
+Created a Power BI dashboard to display monthly revenue and customer activity,routine
+Used an existing AI chatbot platform to answer common customer support questions,routine
+Implemented standard role-based access control using framework documentation,routine
+Moved files from a shared drive into a cloud document management system,routine
+Configured scheduled reports to email managers every Monday morning,routine
+Used vendor-provided analytics tools to track website traffic and conversion rates,routine
+Added standard form validation to prevent users from submitting incomplete records,routine
+Updated database schema to add new customer preference fields,routine
+Reduced manual processing time by automating invoice generation using existing accounting software,routine
+Created scripts to clean and format customer data using known pandas functions,routine
+Fixed intermittent login errors caused by incorrect session timeout settings,routine
+Updated API documentation and refactored code for readability,routine
+Configured a firewall rule using standard security policy requirements,routine
+Improved customer reporting speed but the work appears to use standard database queries and existing BI tools,borderline
+Investigated system slowdowns during month-end reporting but the description does not show failed standard methods or technical learning,borderline
+Tested several vendor chatbot settings to improve response quality but did not develop new model methods or resolve technological uncertainty,borderline
+Adjusted security settings to reduce authentication delays but it is unclear whether the work went beyond standard configuration,borderline
+Modified data cleaning scripts to handle messy customer files but the technical uncertainty is not clearly explained,borderline
+Explored different dashboard layouts to improve user decision making but the advancement appears business-oriented rather than technological,borderline
+Compared existing OCR vendor products to select the most accurate option without modifying or developing the underlying technology,borderline
+Investigated API timeout issues but the description does not explain whether the cause was unknown or whether experiments were performed,borderline
+Improved cloud deployment reliability using standard monitoring and retry tools but no advancement is described,borderline
+Tested multiple report filters and chart layouts to improve usability but the work appears focused on user experience rather than technology,borderline
+We improved the customer experience,needs_more_info
+We made the system faster and easier to use,needs_more_info
+We used automation to reduce manual work,needs_more_info
+We improved reporting capabilities for management,needs_more_info
+We upgraded the platform to support new business requirements,needs_more_info
+We used AI tools in our customer service process,needs_more_info
+We enhanced security and performance,needs_more_info
+We changed the system architecture,needs_more_info
+We built new internal tools,needs_more_info
+We solved operational issues using software,needs_more_info
+"Existing blockchain consensus mechanisms could not maintain transaction validation speed while preserving network integrity under high transaction volume, so the team tested multiple validation approaches and compared failure rates, processing speed, and consistency across iterations",strong_sred
+The company used an existing blockchain API to record transactions and display wallet balances in a dashboard,routine
+The team developed a blockchain-based platform,needs_more_info
+The team compared available blockchain frameworks but did not explain what technological uncertainty existed or what new technical knowledge was gained,borderline
+"Known image recognition models failed to classify plant disease symptoms under variable lighting and overlapping leaf damage, so the team tested preprocessing methods and model architectures to improve detection reliability",strong_sred
+The company used an existing image recognition service to identify plant images uploaded by users,routine
+The team improved crop disease detection using artificial intelligence,needs_more_info
+The team tested several plant image filters to improve classification but the description does not explain whether standard methods were insufficient or what was learned,borderline
+"Standard data reconciliation methods failed when transaction records arrived out of order from multiple systems, so the team tested custom matching logic and measured duplicate rates, mismatch rates, and processing reliability",strong_sred
+The company imported transaction records into accounting software using standard CSV upload tools,routine
+We created a new transaction processing system,needs_more_info
+"The team improved transaction matching accuracy but the uncertainty, experiments, and technical learning are not clearly described",borderline
+"Existing sensor filtering methods failed under unpredictable vibration and noise conditions, so the team tested multiple filtering algorithms and learned which approach improved signal reliability without exceeding processing limits",strong_sred
+The company installed standard sensors and configured alerts using vendor documentation,routine
+We improved sensor data quality,needs_more_info
+The team adjusted sensor thresholds to reduce false alerts but it is unclear whether the work involved technological uncertainty or routine calibration,borderline
+"Available thermal modeling methods could not predict battery enclosure temperatures under rapid charge cycles, so the team formulated hypotheses about airflow paths, built prototypes, and compared logged temperature results across iterations",strong_sred
+The company configured off-the-shelf project management software to track engineering tasks and generate weekly status reports,routine
+We conducted research and development to improve our software platform,needs_more_info
+"The team tested several cache settings to improve page-load time, but the description does not show whether existing techniques were insufficient or what technological knowledge was gained",borderline
+"Standard scheduling algorithms failed when clinical appointments, equipment constraints, and same-day cancellations changed together, so the team tested custom optimization heuristics and measured conflict rates and processing time",strong_sred
+The team added standard input validation and error messages to an online application using framework documentation,routine
+The team built prototypes and learned a lot about the technology,needs_more_info
+"Engineers compared machine learning libraries for invoice classification, but the work appears to select among available tools rather than resolve a stated technological uncertainty",borderline
+"Known natural language extraction models produced unreliable results on bilingual technical maintenance logs, so the team tested tokenization and model-training approaches and documented which experiments reduced extraction errors",strong_sred
+Developers connected a vendor OCR API to scan invoices and populate accounting fields without changing the underlying recognition technology,routine
+We used data science to make better predictions for customers,needs_more_info
+"The company analyzed production defects and adjusted inspection thresholds, but the records do not explain whether the investigation went beyond routine quality control",borderline
+"Existing corrosion detection sensors could not distinguish coating defects from moisture artifacts in field conditions, so the team ran controlled experiments and learned which signal features improved classification reliability",strong_sred
+The team migrated reports to a cloud BI tool and recreated existing charts using documented connectors,routine
+The company created an innovative sensor solution,needs_more_info
+"The team improved API reliability through retries and queue tuning, but the experimental method, hypotheses, and conclusions are not clearly documented",borderline

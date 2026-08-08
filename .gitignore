@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+
+# Local environment
+.env
+.env.*
+
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Notebooks and editor files
+.ipynb_checkpoints/
+.DS_Store
+.idea/
+.vscode/
+
+# Generated analyzer outputs
+reports/
+
+# Local trained model artifact; regenerate with src/train_sred_classifier.py
+*.joblib
+
+# Local repair/backups from CSV append experiments
+data/*backup*.csv
+data/*before*.csv
+data/*broken*.csv
