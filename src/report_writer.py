@@ -7,6 +7,8 @@ def save_report(
     probabilities,
     labels,
     signals,
+    explanation,
+    agent_assessment,
     recommendation,
     evidence_map,
     cra_check,
@@ -48,6 +50,49 @@ def save_report(
                 file.write(f"- {signal}\n")
         else:
             file.write("- None detected\n")
+
+        file.write("\nWhy this classification:\n")
+        file.write(f"Model confidence in top prediction: {explanation['confidence']:.2f}\n")
+
+        file.write("\nReasons:\n")
+        for reason in explanation["reasons"]:
+            file.write(f"- {reason}\n")
+
+        file.write("\nCautions:\n")
+        if explanation["cautions"]:
+            for caution in explanation["cautions"]:
+                file.write(f"- {caution}\n")
+        else:
+            file.write("- None\n")
+
+        file.write("\nNext steps:\n")
+        for step in explanation["next_steps"]:
+            file.write(f"- {step}\n")
+
+        file.write("\nAgentic case assessment:\n")
+        file.write(f"Case stage: {agent_assessment['case_stage']}\n")
+        file.write(f"Priority: {agent_assessment['priority']}\n")
+        file.write(f"Decision: {agent_assessment['decision']}\n")
+        file.write(f"Agent confidence: {agent_assessment['confidence']:.2f}\n")
+
+        file.write("\nBlockers:\n")
+        for blocker in agent_assessment["blockers"]:
+            file.write(f"- {blocker}\n")
+
+        file.write("\nEvidence to request:\n")
+        for item in agent_assessment["evidence_requests"]:
+            file.write(f"- {item}\n")
+
+        file.write("\nInterview focus:\n")
+        for question in agent_assessment["interview_focus"]:
+            file.write(f"- {question}\n")
+
+        file.write("\nAction plan:\n")
+        for action in agent_assessment["action_plan"]:
+            file.write(f"- {action}\n")
+
+        file.write("\nHandoff summary:\n")
+        file.write(agent_assessment["handoff_summary"] + "\n")
 
         file.write("\nRecommendation:\n")
         file.write(recommendation + "\n")

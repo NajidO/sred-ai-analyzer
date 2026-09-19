@@ -8,6 +8,8 @@ from recommendation import generate_recommendation
 from evidence_mapper import map_to_sred_framework
 from report_writer import save_report
 from cra_guideline_checker import check_against_cra_guidelines
+from explanation import generate_label_explanation
+from agent_assessment import build_agent_assessment
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODEL_PATH = BASE_DIR / "sred_classifier.joblib"
@@ -43,6 +45,24 @@ def analyze_project(text):
     )
     evidence_map = map_to_sred_framework(text, signals)
     cra_check = check_against_cra_guidelines(text, signals)
+    explanation = generate_label_explanation(
+        prediction,
+        probabilities,
+        labels,
+        signals,
+        cra_check
+    )
+    agent_assessment = build_agent_assessment(
+        prediction,
+        probabilities,
+        labels,
+        signals,
+        cra_check,
+        evidence_map,
+        questions,
+        cra_reference_questions,
+        explanation,
+    )
 
     print_header("SR&ED TECHNICAL UNCERTAINTY ANALYSIS")
 
@@ -55,6 +75,49 @@ def analyze_project(text):
     print_section("CATEGORY PROBABILITIES")
     for label, probability in zip(labels, probabilities):
         print(f"{label}: {probability:.2f}")
+
+    print_section("WHY THIS CLASSIFICATION")
+    print(f"Model confidence in top prediction: {explanation['confidence']:.2f}")
+
+    print("\nReasons:")
+    for reason in explanation["reasons"]:
+        print(f"- {reason}")
+
+    print("\nCautions:")
+    if explanation["cautions"]:
+        for caution in explanation["cautions"]:
+            print(f"- {caution}")
+    else:
+        print("- None")
+
+    print("\nNext steps:")
+    for step in explanation["next_steps"]:
+        print(f"- {step}")
+
+    print_section("AGENTIC CASE ASSESSMENT")
+    print(f"Case stage: {agent_assessment['case_stage']}")
+    print(f"Priority: {agent_assessment['priority']}")
+    print(f"Decision: {agent_assessment['decision']}")
+    print(f"Agent confidence: {agent_assessment['confidence']:.2f}")
+
+    print("\nBlockers:")
+    for blocker in agent_assessment["blockers"]:
+        print(f"- {blocker}")
+
+    print("\nEvidence to request:")
+    for item in agent_assessment["evidence_requests"]:
+        print(f"- {item}")
+
+    print("\nInterview focus:")
+    for question in agent_assessment["interview_focus"]:
+        print(f"- {question}")
+
+    print("\nAction plan:")
+    for action in agent_assessment["action_plan"]:
+        print(f"- {action}")
+
+    print("\nHandoff summary:")
+    print(agent_assessment["handoff_summary"])
 
     print_section("DETECTED SIGNALS")
     print("Uncertainty signals:")
@@ -113,6 +176,8 @@ def analyze_project(text):
         probabilities,
         labels,
         signals,
+        explanation,
+        agent_assessment,
         recommendation,
         evidence_map,
         cra_check,
