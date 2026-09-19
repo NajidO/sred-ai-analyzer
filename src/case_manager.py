@@ -14,6 +14,7 @@ from intake_agent import (
     save_analysis_report,
     select_intake_questions,
 )
+from technical_report import generate_technical_report_for_case
 
 
 def list_cases(base_dir=BASE_DIR):
@@ -203,6 +204,17 @@ def build_parser():
         help="Maximum number of follow-up questions to ask.",
     )
 
+    report_parser = subparsers.add_parser(
+        "report",
+        help="Generate a technical report draft from a saved case file.",
+    )
+    report_parser.add_argument("case_id", help="Case ID, file name, or JSON path.")
+    report_parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Print the generated report after saving it.",
+    )
+
     return parser
 
 
@@ -221,6 +233,17 @@ def main():
     if args.command == "resume":
         model = load_classifier(MODEL_PATH)
         resume_case(args.case_id, model, max_questions=args.max_questions)
+        return
+
+    if args.command == "report":
+        report_path = generate_technical_report_for_case(args.case_id)
+        print("Technical report saved:")
+        print(report_path)
+
+        if args.show:
+            print()
+            print(report_path.read_text(encoding="utf-8"))
+
         return
 
     parser.error(f"Unknown command: {args.command}")

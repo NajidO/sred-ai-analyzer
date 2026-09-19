@@ -22,6 +22,11 @@ from case_store import (
 )
 from questions import generate_followup_questions, generate_cra_reference_questions
 from rules import extract_signals
+from technical_report import (
+    assess_report_readiness,
+    build_technical_report,
+    generate_technical_report_for_case,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -384,6 +389,61 @@ def validate_case_manager_layer(model):
     print("PASS: resumed case file and saved child case")
 
 
+def validate_technical_report_layer(model):
+    session = build_sample_case_session(model)
+
+    with TemporaryDirectory() as temp_dir:
+        base_dir = Path(temp_dir)
+        case_path = save_intake_case_file(session, base_dir)
+        case_data = load_case(case_path.stem, base_dir)
+        report = build_technical_report(case_data)
+        readiness = assess_report_readiness(case_data["final_assessment"])
+        report_path = generate_technical_report_for_case(case_path.stem, base_dir)
+        report_text = report_path.read_text(encoding="utf-8")
+
+    required_sections = [
+        "Executive Summary",
+        "Project Overview",
+        "Technological Uncertainty",
+        "Systematic Investigation",
+        "Results And Technical Learning",
+        "Supporting Evidence Inventory",
+        "Open Gaps And Analyst Questions",
+    ]
+    rendered_headings = [section["heading"] for section in report["sections"]]
+    for section in required_sections:
+        if section not in rendered_headings:
+            raise AssertionError(f"Technical report is missing section: {section}")
+
+    required_fragments = [
+        "# SR&ED Technical Report Draft",
+        f"Case ID: {case_path.stem}",
+        "Report readiness",
+        "Standard database indexing did not resolve write latency",
+        "Supporting Evidence Inventory",
+    ]
+    for fragment in required_fragments:
+        if fragment not in report_text:
+            raise AssertionError(f"Technical report text is missing: {fragment}")
+
+    if readiness["score"] <= 0:
+        raise AssertionError("Technical report readiness score was not calculated.")
+
+    if readiness["level"] not in {
+        "draft_ready",
+        "draft_with_gaps",
+        "intake_required",
+        "not_report_ready",
+    }:
+        raise AssertionError("Technical report readiness level is invalid.")
+
+    print("\nTechnical report generator checks")
+    print("=" * 80)
+    print("PASS: built structured technical report draft")
+    print("PASS: saved Markdown technical report")
+    print("PASS: calculated report readiness")
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -471,3 +531,4 @@ else:
 validate_agent_assessment_layer()
 validate_intake_agent_layer(model)
 validate_case_manager_layer(model)
+validate_technical_report_layer(model)

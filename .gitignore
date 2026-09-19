@@ -33,6 +33,7 @@ htmlcov/
 # Generated analyzer outputs
 reports/
 case_files/
+technical_reports/
 
 # Local trained model artifact; regenerate with src/train_sred_classifier.py
 *.joblib
