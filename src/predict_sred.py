@@ -1,20 +1,7 @@
-from pathlib import Path
-
-import joblib
-
-from rules import extract_signals
-from questions import generate_followup_questions, generate_cra_reference_questions
-from recommendation import generate_recommendation
-from evidence_mapper import map_to_sred_framework
+from analysis_engine import BASE_DIR, MODEL_PATH, analyze_text, load_classifier
 from report_writer import save_report
-from cra_guideline_checker import check_against_cra_guidelines
-from explanation import generate_label_explanation
-from agent_assessment import build_agent_assessment
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-MODEL_PATH = BASE_DIR / "sred_classifier.joblib"
-
-model = joblib.load(MODEL_PATH)
+model = load_classifier(MODEL_PATH)
 
 
 def print_header(title):
@@ -30,39 +17,18 @@ def print_section(title):
 
 
 def analyze_project(text):
-    prediction = model.predict([text])[0]
-    probabilities = model.predict_proba([text])[0]
-    labels = model.classes_
-
-    signals = extract_signals(text)
-    questions = generate_followup_questions(prediction, signals)
-    cra_reference_questions = generate_cra_reference_questions()
-    recommendation = generate_recommendation(
-        prediction,
-        probabilities,
-        labels,
-        signals
-    )
-    evidence_map = map_to_sred_framework(text, signals)
-    cra_check = check_against_cra_guidelines(text, signals)
-    explanation = generate_label_explanation(
-        prediction,
-        probabilities,
-        labels,
-        signals,
-        cra_check
-    )
-    agent_assessment = build_agent_assessment(
-        prediction,
-        probabilities,
-        labels,
-        signals,
-        cra_check,
-        evidence_map,
-        questions,
-        cra_reference_questions,
-        explanation,
-    )
+    analysis = analyze_text(text, model)
+    prediction = analysis["prediction"]
+    probabilities = analysis["probabilities"]
+    labels = analysis["labels"]
+    signals = analysis["signals"]
+    questions = analysis["questions"]
+    cra_reference_questions = analysis["cra_reference_questions"]
+    recommendation = analysis["recommendation"]
+    evidence_map = analysis["evidence_map"]
+    cra_check = analysis["cra_check"]
+    explanation = analysis["explanation"]
+    agent_assessment = analysis["agent_assessment"]
 
     print_header("SR&ED TECHNICAL UNCERTAINTY ANALYSIS")
 

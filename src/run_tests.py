@@ -4,10 +4,12 @@ from collections import Counter
 import pandas as pd
 import joblib
 
+from analysis_engine import analyze_text
 from agent_assessment import build_agent_assessment
 from cra_guideline_checker import check_against_cra_guidelines
 from evidence_mapper import map_to_sred_framework
 from explanation import generate_label_explanation
+from intake_agent import build_updated_description, select_intake_questions
 from questions import generate_followup_questions, generate_cra_reference_questions
 from rules import extract_signals
 
@@ -164,6 +166,66 @@ def validate_agent_assessment_layer():
         print(f"PASS: {case['name']}")
 
 
+def validate_intake_agent_layer(model):
+    initial_text = "We improved the backend system."
+    initial_analysis = analyze_text(initial_text, model)
+    questions = select_intake_questions(
+        initial_analysis["agent_assessment"],
+        max_questions=3,
+    )
+
+    if not questions:
+        raise AssertionError("Intake agent did not generate follow-up questions.")
+
+    if len(questions) > 3:
+        raise AssertionError("Intake agent returned more questions than requested.")
+
+    if len(questions) != len(set(questions)):
+        raise AssertionError("Intake agent returned duplicate questions.")
+
+    answers = [
+        {
+            "question": questions[0],
+            "answer": (
+                "Standard database indexing did not resolve write latency under "
+                "concurrent transaction loads, so the team tested partitioning "
+                "and queueing approaches."
+            ),
+        }
+    ]
+    updated_text = build_updated_description(initial_text, answers)
+
+    required_fragments = [
+        initial_text,
+        "Follow-up intake answers:",
+        f"Question: {questions[0]}",
+        answers[0]["answer"],
+    ]
+    for fragment in required_fragments:
+        if fragment not in updated_text:
+            raise AssertionError(f"Updated intake description is missing: {fragment}")
+
+    final_analysis = analyze_text(updated_text, model)
+    required_keys = [
+        "prediction",
+        "agent_assessment",
+        "explanation",
+        "cra_check",
+    ]
+    for key in required_keys:
+        if key not in final_analysis:
+            raise AssertionError(f"Final intake analysis is missing: {key}")
+
+    if not final_analysis["agent_assessment"]["action_plan"]:
+        raise AssertionError("Final intake assessment returned an empty action plan.")
+
+    print("\nGuided intake agent checks")
+    print("=" * 80)
+    print("PASS: generated prioritized intake questions")
+    print("PASS: built updated case description from answers")
+    print("PASS: re-analyzed updated case description")
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -249,3 +311,4 @@ else:
     print("\nNo mistakes found.")
 
 validate_agent_assessment_layer()
+validate_intake_agent_layer(model)

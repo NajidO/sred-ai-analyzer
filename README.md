@@ -31,12 +31,16 @@ data/
   test_examples.csv
 src/
   add_cra_batch.py
+  agent_assessment.py
+  analysis_engine.py
   train_sred_classifier.py
   run_tests.py
+  intake_agent.py
   predict_sred.py
   cra_guideline_checker.py
   cra_reference.py
   evidence_mapper.py
+  explanation.py
   questions.py
   recommendation.py
   report_writer.py
@@ -78,6 +82,14 @@ python src/predict_sred.py
 
 Paste a technical project description when prompted. The tool returns a classification, probabilities, signals, follow-up questions, and a saved report.
 
+## Run the Guided Intake Agent
+
+```bash
+python src/intake_agent.py
+```
+
+Paste an initial project description. The agent runs an initial assessment, asks the highest-priority follow-up questions, adds the answers to the case description, re-runs the assessment, and saves an updated report.
+
 ## Add CRA-Grounded Training Examples
 
 ```bash
@@ -93,8 +105,10 @@ Latest local run:
 ```text
 Training CSV integrity check: PASS
 Training rows: 147
-Classifier tests: 18/18
+Classifier tests: 26/26
 Accuracy: 100.00%
+Agentic assessment checks: PASS
+Guided intake agent checks: PASS
 ```
 
 This accuracy is only for the current controlled test set. More diverse examples are still needed before treating the model as reliable.
@@ -104,5 +118,6 @@ This accuracy is only for the current controlled test set. More diverse examples
 - add more challenging `borderline` and `needs_more_info` tests
 - separate data validation into a reusable module or test file
 - add analyst-facing examples and confidence interpretation
+- persist guided intake sessions as reusable case files
 - consider a small Streamlit interface for guided review
 - document model limitations and human review requirements
