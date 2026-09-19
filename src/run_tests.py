@@ -1,5 +1,7 @@
 from pathlib import Path
 from collections import Counter
+from tempfile import TemporaryDirectory
+import json
 
 import pandas as pd
 import joblib
@@ -10,6 +12,7 @@ from cra_guideline_checker import check_against_cra_guidelines
 from evidence_mapper import map_to_sred_framework
 from explanation import generate_label_explanation
 from intake_agent import build_updated_description, select_intake_questions
+from case_store import save_intake_case_file
 from questions import generate_followup_questions, generate_cra_reference_questions
 from rules import extract_signals
 
@@ -219,11 +222,49 @@ def validate_intake_agent_layer(model):
     if not final_analysis["agent_assessment"]["action_plan"]:
         raise AssertionError("Final intake assessment returned an empty action plan.")
 
+    session = {
+        "initial_analysis": initial_analysis,
+        "questions": questions,
+        "answers": answers,
+        "updated_text": updated_text,
+        "final_analysis": final_analysis,
+        "report_path": BASE_DIR / "reports" / "test_report.txt",
+    }
+
+    with TemporaryDirectory() as temp_dir:
+        case_path = save_intake_case_file(session, Path(temp_dir))
+        case_data = json.loads(case_path.read_text(encoding="utf-8"))
+
+    expected_case_fields = [
+        "case_id",
+        "created_at",
+        "original_text",
+        "questions",
+        "answers",
+        "updated_text",
+        "report_path",
+        "initial_assessment",
+        "final_assessment",
+    ]
+    for field in expected_case_fields:
+        if field not in case_data:
+            raise AssertionError(f"Case file is missing: {field}")
+
+    if case_data["original_text"] != initial_text:
+        raise AssertionError("Case file did not preserve the original text.")
+
+    if case_data["answers"][0]["answer"] != answers[0]["answer"]:
+        raise AssertionError("Case file did not preserve the intake answer.")
+
+    if case_data["final_assessment"]["prediction"] != final_analysis["prediction"]:
+        raise AssertionError("Case file final assessment prediction is incorrect.")
+
     print("\nGuided intake agent checks")
     print("=" * 80)
     print("PASS: generated prioritized intake questions")
     print("PASS: built updated case description from answers")
     print("PASS: re-analyzed updated case description")
+    print("PASS: saved reusable JSON case file")
 
 
 training_df = validate_training_csv()

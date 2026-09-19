@@ -1,4 +1,5 @@
 from analysis_engine import BASE_DIR, MODEL_PATH, analyze_text, load_classifier
+from case_store import save_intake_case_file
 from report_writer import save_report
 
 
@@ -138,6 +139,16 @@ def run_intake_session(initial_text, model, max_questions=DEFAULT_MAX_QUESTIONS)
     updated_text = build_updated_description(initial_text, answers)
     final_analysis = analyze_text(updated_text, model)
     report_path = save_analysis_report(updated_text, final_analysis)
+    session = {
+        "initial_analysis": initial_analysis,
+        "questions": questions,
+        "answers": answers,
+        "updated_text": updated_text,
+        "final_analysis": final_analysis,
+        "report_path": report_path,
+    }
+    case_file_path = save_intake_case_file(session, BASE_DIR)
+    session["case_file_path"] = case_file_path
 
     print_case_snapshot("UPDATED CASE ASSESSMENT", final_analysis)
 
@@ -147,14 +158,10 @@ def run_intake_session(initial_text, model, max_questions=DEFAULT_MAX_QUESTIONS)
     print_section("REPORT SAVED")
     print(report_path)
 
-    return {
-        "initial_analysis": initial_analysis,
-        "questions": questions,
-        "answers": answers,
-        "updated_text": updated_text,
-        "final_analysis": final_analysis,
-        "report_path": report_path,
-    }
+    print_section("CASE FILE SAVED")
+    print(case_file_path)
+
+    return session
 
 
 def main():

@@ -33,6 +33,7 @@ src/
   add_cra_batch.py
   agent_assessment.py
   analysis_engine.py
+  case_store.py
   train_sred_classifier.py
   run_tests.py
   intake_agent.py
@@ -48,7 +49,7 @@ src/
 requirements.txt
 ```
 
-Generated reports, virtual environments, Python caches, and local trained model artifacts are excluded from GitHub by `.gitignore`.
+Generated reports, guided intake case files, virtual environments, Python caches, and local trained model artifacts are excluded from GitHub by `.gitignore`.
 
 ## Setup
 
@@ -88,7 +89,7 @@ Paste a technical project description when prompted. The tool returns a classifi
 python src/intake_agent.py
 ```
 
-Paste an initial project description. The agent runs an initial assessment, asks the highest-priority follow-up questions, adds the answers to the case description, re-runs the assessment, and saves an updated report.
+Paste an initial project description. The agent runs an initial assessment, asks the highest-priority follow-up questions, adds the answers to the case description, re-runs the assessment, saves an updated report, and writes a reusable JSON case file under `case_files/`.
 
 ## Add CRA-Grounded Training Examples
 
@@ -109,6 +110,7 @@ Classifier tests: 26/26
 Accuracy: 100.00%
 Agentic assessment checks: PASS
 Guided intake agent checks: PASS
+Reusable JSON case file checks: PASS
 ```
 
 This accuracy is only for the current controlled test set. More diverse examples are still needed before treating the model as reliable.
@@ -118,6 +120,6 @@ This accuracy is only for the current controlled test set. More diverse examples
 - add more challenging `borderline` and `needs_more_info` tests
 - separate data validation into a reusable module or test file
 - add analyst-facing examples and confidence interpretation
-- persist guided intake sessions as reusable case files
+- add commands to list, inspect, and resume saved case files
 - consider a small Streamlit interface for guided review
 - document model limitations and human review requirements
