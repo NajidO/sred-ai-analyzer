@@ -55,7 +55,7 @@ def build_updated_description(original_text, answers):
     return "\n".join(lines)
 
 
-def save_analysis_report(text, analysis):
+def save_analysis_report(text, analysis, base_dir=BASE_DIR):
     return save_report(
         text,
         analysis["prediction"],
@@ -69,7 +69,7 @@ def save_analysis_report(text, analysis):
         analysis["cra_check"],
         analysis["questions"],
         analysis["cra_reference_questions"],
-        BASE_DIR,
+        base_dir,
     )
 
 

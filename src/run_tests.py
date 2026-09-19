@@ -6,13 +6,20 @@ import json
 import pandas as pd
 import joblib
 
+import case_manager
 from analysis_engine import analyze_text
 from agent_assessment import build_agent_assessment
+from case_manager import build_resumed_description, inspect_case, list_cases, resume_case
 from cra_guideline_checker import check_against_cra_guidelines
 from evidence_mapper import map_to_sred_framework
 from explanation import generate_label_explanation
 from intake_agent import build_updated_description, select_intake_questions
-from case_store import save_intake_case_file
+from case_store import (
+    list_case_files,
+    load_case,
+    save_intake_case_file,
+    summarize_case_for_listing,
+)
 from questions import generate_followup_questions, generate_cra_reference_questions
 from rules import extract_signals
 
@@ -267,6 +274,116 @@ def validate_intake_agent_layer(model):
     print("PASS: saved reusable JSON case file")
 
 
+def build_sample_case_session(model):
+    initial_text = "We improved the backend system."
+    initial_analysis = analyze_text(initial_text, model)
+    questions = select_intake_questions(
+        initial_analysis["agent_assessment"],
+        max_questions=3,
+    )
+    answers = [
+        {
+            "question": questions[0],
+            "answer": (
+                "Standard database indexing did not resolve write latency under "
+                "concurrent transaction loads."
+            ),
+        },
+        {
+            "question": questions[1],
+            "answer": (
+                "The team tested partitioning, queueing, and batching approaches, "
+                "then compared latency and error rates across iterations."
+            ),
+        },
+    ]
+    updated_text = build_updated_description(initial_text, answers)
+    final_analysis = analyze_text(updated_text, model)
+
+    return {
+        "initial_analysis": initial_analysis,
+        "questions": questions,
+        "answers": answers,
+        "updated_text": updated_text,
+        "final_analysis": final_analysis,
+        "report_path": BASE_DIR / "reports" / "sample_report.txt",
+    }
+
+
+def validate_case_manager_layer(model):
+    session = build_sample_case_session(model)
+
+    with TemporaryDirectory() as temp_dir:
+        case_path = save_intake_case_file(session, Path(temp_dir))
+        case_id = case_path.stem
+
+        listed_cases = list_case_files(Path(temp_dir))
+        if len(listed_cases) != 1:
+            raise AssertionError("Case listing did not return the saved case.")
+
+        printed_cases = list_cases(Path(temp_dir))
+        if len(printed_cases) != 1:
+            raise AssertionError("Case manager list command did not return the saved case.")
+
+        loaded_case = load_case(case_id, Path(temp_dir))
+        if loaded_case["case_id"] != case_id:
+            raise AssertionError("Loaded case ID does not match the saved case.")
+
+        inspected_case = inspect_case(case_id, Path(temp_dir))
+        if inspected_case["case_id"] != case_id:
+            raise AssertionError("Inspect command returned the wrong case.")
+
+        listing_summary = summarize_case_for_listing(loaded_case)
+        if not listing_summary["summary"]:
+            raise AssertionError("Case listing summary is empty.")
+
+        resumed_text = build_resumed_description(
+            loaded_case["updated_text"],
+            [
+                {
+                    "question": "What evidence supports the investigation?",
+                    "answer": "Jira tickets and benchmark logs are available.",
+                }
+            ],
+        )
+        if "Additional follow-up intake answers:" not in resumed_text:
+            raise AssertionError("Resume description did not add the resume answer section.")
+
+        original_collect = case_manager.collect_intake_answers
+        case_manager.collect_intake_answers = lambda questions: [
+            {
+                "question": questions[0],
+                "answer": "The team can provide Jira tickets, commits, and benchmark logs.",
+            }
+        ]
+        try:
+            resume_result = resume_case(
+                case_id,
+                model,
+                base_dir=Path(temp_dir),
+                max_questions=1,
+            )
+        finally:
+            case_manager.collect_intake_answers = original_collect
+
+        resumed_case_path = resume_result["case_file_path"]
+        if resumed_case_path is None:
+            raise AssertionError("Resume command did not save a new case file.")
+
+        resumed_case = json.loads(resumed_case_path.read_text(encoding="utf-8"))
+        if resumed_case.get("parent_case_id") != case_id:
+            raise AssertionError("Resumed case did not record its parent case ID.")
+
+        if resumed_case["status"] != "resumed":
+            raise AssertionError("Resumed case did not record resumed status.")
+
+    print("\nCase manager checks")
+    print("=" * 80)
+    print("PASS: listed saved case files")
+    print("PASS: inspected saved case file")
+    print("PASS: resumed case file and saved child case")
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -353,3 +470,4 @@ else:
 
 validate_agent_assessment_layer()
 validate_intake_agent_layer(model)
+validate_case_manager_layer(model)

@@ -34,6 +34,7 @@ src/
   agent_assessment.py
   analysis_engine.py
   case_store.py
+  case_manager.py
   train_sred_classifier.py
   run_tests.py
   intake_agent.py
@@ -91,6 +92,16 @@ python src/intake_agent.py
 
 Paste an initial project description. The agent runs an initial assessment, asks the highest-priority follow-up questions, adds the answers to the case description, re-runs the assessment, saves an updated report, and writes a reusable JSON case file under `case_files/`.
 
+## Manage Saved Case Files
+
+```bash
+python src/case_manager.py list
+python src/case_manager.py inspect case_YYYYMMDD_HHMMSS
+python src/case_manager.py resume case_YYYYMMDD_HHMMSS
+```
+
+Saved case files can be listed, inspected, and resumed. Resuming a case asks follow-up questions from the latest assessment, saves a new report, and writes a child JSON case file linked to the parent case.
+
 ## Add CRA-Grounded Training Examples
 
 ```bash
@@ -111,6 +122,7 @@ Accuracy: 100.00%
 Agentic assessment checks: PASS
 Guided intake agent checks: PASS
 Reusable JSON case file checks: PASS
+Case manager checks: PASS
 ```
 
 This accuracy is only for the current controlled test set. More diverse examples are still needed before treating the model as reliable.
@@ -120,6 +132,6 @@ This accuracy is only for the current controlled test set. More diverse examples
 - add more challenging `borderline` and `needs_more_info` tests
 - separate data validation into a reusable module or test file
 - add analyst-facing examples and confidence interpretation
-- add commands to list, inspect, and resume saved case files
+- add case export formats for analyst handoff
 - consider a small Streamlit interface for guided review
 - document model limitations and human review requirements
