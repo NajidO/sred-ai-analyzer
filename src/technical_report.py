@@ -1,4 +1,5 @@
 import argparse
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -7,6 +8,24 @@ from case_store import load_case
 
 
 TECHNICAL_REPORTS_DIR = "technical_reports"
+T661_LINE_WORD_LIMITS = {
+    "242": 350,
+    "244": 700,
+    "246": 350,
+}
+T661_LINE_TITLES = {
+    "242": "What scientific or technological uncertainties did you attempt to overcome?",
+    "244": (
+        "What work did you perform in the tax year to overcome the scientific or "
+        "technological uncertainties described in line 242?"
+    ),
+    "246": (
+        "What scientific or technological advancements did you achieve or attempt "
+        "to achieve as a result of the work described in line 244?"
+    ),
+}
+QUESTION_HEADING_PATTERN = re.compile(r"^##\s+(\d+)\.\s*(.+?)\s*$")
+SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
 
 
 def get_technical_report_dir(base_dir):
@@ -38,18 +57,25 @@ def build_technical_report(case_data):
     cra_checks = final_assessment["cra_checks"]
     evidence_map = final_assessment["evidence_map"]
     readiness = assess_report_readiness(final_assessment)
+    source_sections = extract_questionnaire_sections(case_data.get("updated_text", ""))
+    t661_project_description = build_t661_project_description(
+        case_data,
+        final_assessment,
+        source_sections,
+    )
 
     return {
-        "title": "SR&ED Technical Report Draft",
+        "title": "SR&ED T661 Technical Report Draft",
         "case_id": case_data.get("case_id", ""),
         "created_at": case_data.get("created_at", ""),
         "status": case_data.get("status", ""),
         "source_case_path": case_data.get("_path", ""),
         "readiness": readiness,
         "metadata": build_metadata(case_data, final_assessment, agent_assessment),
+        "t661_project_description": t661_project_description,
         "sections": [
             build_executive_summary(final_assessment, agent_assessment, readiness),
-            build_project_overview(case_data),
+            build_project_overview(case_data, source_sections),
             build_technical_objective_section(cra_checks, final_assessment),
             build_uncertainty_section(cra_checks, evidence_map),
             build_standard_practice_section(final_assessment),
@@ -60,6 +86,225 @@ def build_technical_report(case_data):
             build_gaps_section(agent_assessment),
         ],
     }
+
+
+def build_t661_project_description(case_data, final_assessment, source_sections=None):
+    source_sections = source_sections or extract_questionnaire_sections(
+        case_data.get("updated_text", "")
+    )
+
+    line_242 = build_t661_line_242(case_data, final_assessment, source_sections)
+    line_244 = build_t661_line_244(case_data, final_assessment, source_sections)
+    line_246 = build_t661_line_246(case_data, final_assessment, source_sections)
+
+    return {
+        "242": build_t661_line("242", line_242),
+        "244": build_t661_line("244", line_244),
+        "246": build_t661_line("246", line_246),
+    }
+
+
+def build_t661_line(line_number, text):
+    limit = T661_LINE_WORD_LIMITS[line_number]
+    draft = limit_words(clean_whitespace(text), limit)
+    count = word_count(draft)
+    warnings = []
+
+    if count > limit:
+        warnings.append(f"Draft exceeds the {limit}-word CRA limit.")
+
+    if count < 40:
+        warnings.append("Draft is likely too thin for this T661 field.")
+
+    return {
+        "line": line_number,
+        "title": T661_LINE_TITLES[line_number],
+        "word_limit": limit,
+        "word_count": count,
+        "draft": draft,
+        "warnings": warnings,
+    }
+
+
+def build_t661_line_242(case_data, final_assessment, source_sections):
+    if source_sections:
+        paragraphs = []
+        paragraphs.extend(
+            get_relevant_paragraphs(
+                source_sections,
+                [1],
+                [
+                    "objective",
+                    "target",
+                    "resolution",
+                    "drift",
+                    "signal",
+                    "shorter",
+                    "compact",
+                ],
+                max_items=3,
+                max_per_section=2,
+            )
+        )
+        paragraphs.extend(
+            get_relevant_paragraphs(
+                source_sections,
+                [2, 4],
+                [
+                    "existing",
+                    "available",
+                    "standard",
+                    "published",
+                    "could not",
+                    "did not",
+                    "not provide",
+                    "limitations",
+                    "shortcomings",
+                ],
+                max_items=4,
+                max_per_section=2,
+            )
+        )
+        paragraphs.extend(
+            get_relevant_paragraphs(
+                source_sections,
+                [3, 5],
+                [
+                    "uncertainty",
+                    "did not know",
+                    "whether",
+                    "combination",
+                    "hypothesis",
+                    "at this point",
+                    "could be achieved",
+                ],
+                max_items=6,
+                max_per_section=3,
+            )
+        )
+
+        if paragraphs:
+            return " ".join(paragraphs)
+
+    evidence_map = final_assessment.get("evidence_map", {})
+    cra_checks = final_assessment.get("cra_checks", {})
+    uncertainty_check = cra_checks.get("technological_uncertainty", {})
+    advancement_check = cra_checks.get("technological_advancement", {})
+
+    return (
+        f"The project attempted to resolve the following scientific or technological "
+        f"uncertainty: {evidence_map.get('possible_uncertainty', '')} "
+        f"{uncertainty_check.get('comment', '')} "
+        f"The intended technical objective or advancement was: "
+        f"{advancement_check.get('comment', '')}"
+    )
+
+
+def build_t661_line_244(case_data, final_assessment, source_sections):
+    if source_sections:
+        paragraphs = []
+        paragraphs.extend(
+            get_relevant_paragraphs(
+                source_sections,
+                [6, 7, 8, 9, 10],
+                [
+                    "tested",
+                    "prototype",
+                    "hypothesis",
+                    "simulation",
+                    "manufactured",
+                    "instrumented",
+                    "measured",
+                    "developed",
+                    "combined",
+                    "recorded",
+                    "performed",
+                    "conclusion",
+                    "reduced",
+                    "improved",
+                    "failed",
+                    "did not",
+                ],
+                max_items=22,
+                max_per_section=4,
+            )
+        )
+        paragraphs.extend(
+            get_relevant_paragraphs(
+                source_sections,
+                [11, 12],
+                [
+                    "recorded",
+                    "evaluated",
+                    "captured",
+                    "measured",
+                    "compared",
+                    "results",
+                    "reduced",
+                    "improved",
+                    "produced",
+                    "year-end",
+                ],
+                max_items=14,
+                max_per_section=8,
+            )
+        )
+
+        if paragraphs:
+            return " ".join(paragraphs)
+
+    evidence_map = final_assessment.get("evidence_map", {})
+    experiments = "; ".join(evidence_map.get("possible_experiments", []))
+    results = evidence_map.get("possible_results", "")
+
+    return (
+        "The work performed in the tax year should be described chronologically, "
+        "including each hypothesis, experiment or analysis, result, and conclusion. "
+        f"Detected experiment indicators include: {experiments}. "
+        f"Detected result indicators include: {results}"
+    )
+
+
+def build_t661_line_246(case_data, final_assessment, source_sections):
+    if source_sections:
+        paragraphs = []
+        paragraphs.extend(
+            get_relevant_paragraphs(
+                source_sections,
+                [13, 14, 15, 16],
+                [
+                    "gained",
+                    "determined",
+                    "established",
+                    "learned",
+                    "understanding",
+                    "knowledge",
+                    "improved",
+                    "reduced",
+                    "failed",
+                    "not viable",
+                    "not sufficient",
+                    "remained",
+                    "not fully resolved",
+                ],
+                max_items=14,
+                max_per_section=6,
+            )
+        )
+
+        if paragraphs:
+            return " ".join(paragraphs)
+
+    cra_checks = final_assessment.get("cra_checks", {})
+    advancement_check = cra_checks.get("technological_advancement", {})
+    explanation = final_assessment.get("explanation", {})
+    reasons = " ".join(explanation.get("reasons", [])[:3])
+
+    return (
+        "The scientific or technological advancement should describe the new knowledge "
+        "gained from the work, not the business or product benefit. "
+        f"{advancement_check.get('comment', '')} {reasons}"
+    )
 
 
 def build_metadata(case_data, final_assessment, agent_assessment):
@@ -105,11 +350,24 @@ def build_executive_summary(final_assessment, agent_assessment, readiness):
     }
 
 
-def build_project_overview(case_data):
+def build_project_overview(case_data, source_sections=None):
+    source_sections = source_sections or {}
     body = [
-        "The current project record is based on the saved intake description below.",
-        blockquote(case_data.get("updated_text", "")),
+        "The saved source record remains available for analyst review.",
     ]
+
+    if source_sections:
+        body.append(
+            "Questionnaire-style input was detected and used to draft the T661 lines."
+        )
+        bullets = [
+            f"Question {number}: {section['title']}"
+            for number, section in sorted(source_sections.items())
+        ]
+    else:
+        body.append("No numbered questionnaire structure was detected.")
+        bullets = build_answer_bullets(case_data.get("answers", []))
+        body.append(blockquote(case_data.get("updated_text", "")))
 
     original_text = case_data.get("original_text", "").strip()
     updated_text = case_data.get("updated_text", "").strip()
@@ -120,7 +378,7 @@ def build_project_overview(case_data):
     return {
         "heading": "Project Overview",
         "body": body,
-        "bullets": build_answer_bullets(case_data.get("answers", [])),
+        "bullets": bullets,
         "gaps": [],
     }
 
@@ -385,10 +643,41 @@ def render_technical_report(report):
         f"- Readiness: {report['readiness']['level']}",
         f"- Readiness score: {report['readiness']['score']}%",
         "",
+        "## T661 Project Description Draft",
+        "",
+        (
+            "These drafts are structured for Form T661 Part 2, Section B. "
+            "Review the wording, confirm technical accuracy, and enter the final "
+            "version into approved tax software or the form workflow."
+        ),
+        "",
+    ])
+
+    for line_number in ["242", "244", "246"]:
+        line = report["t661_project_description"][line_number]
+        lines.append(
+            f"### Line {line_number} - {line['title']} "
+            f"(Maximum {line['word_limit']} words)"
+        )
+        lines.append("")
+        lines.append(f"Word count: {line['word_count']} / {line['word_limit']}")
+        lines.append("")
+        lines.append(line["draft"])
+        lines.append("")
+
+        if line["warnings"]:
+            lines.append("Warnings:")
+            for warning in line["warnings"]:
+                lines.append(f"- {warning}")
+            lines.append("")
+
+    lines.extend([
+        "## Supporting Analyst Notes",
+        "",
     ])
 
     for section in report["sections"]:
-        lines.append(f"## {section['heading']}")
+        lines.append(f"### {section['heading']}")
         lines.append("")
 
         for paragraph in section.get("body", []):
@@ -410,6 +699,144 @@ def render_technical_report(report):
             lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def extract_questionnaire_sections(text):
+    sections = {}
+    current_number = None
+    current_title = ""
+    current_lines = []
+
+    for line in text.splitlines():
+        match = QUESTION_HEADING_PATTERN.match(line.strip())
+        if match:
+            if current_number is not None:
+                sections[current_number] = {
+                    "title": current_title,
+                    "text": "\n".join(current_lines).strip(),
+                }
+
+            current_number = int(match.group(1))
+            current_title = match.group(2).strip()
+            current_lines = []
+        elif current_number is not None:
+            current_lines.append(line)
+
+    if current_number is not None:
+        sections[current_number] = {
+            "title": current_title,
+            "text": "\n".join(current_lines).strip(),
+        }
+
+    return sections
+
+
+def get_relevant_paragraphs(sections, section_numbers, keywords, max_items, max_per_section=3):
+    items = []
+
+    for number in section_numbers:
+        section = sections.get(number)
+        if not section:
+            continue
+
+        candidates = extract_relevant_sentences(section["text"], keywords)
+        if not candidates:
+            candidates = split_paragraphs(section["text"])[:2]
+
+        section_items = 0
+        for candidate in candidates:
+            cleaned = clean_markdown(candidate)
+            if cleaned and not cleaned.endswith(":") and cleaned not in items:
+                items.append(cleaned)
+                section_items += 1
+
+            if len(items) >= max_items:
+                return items
+
+            if section_items >= max_per_section:
+                break
+
+    return items
+
+
+def extract_relevant_sentences(text, keywords):
+    sentences = split_sentences(text)
+    matches = []
+    lowered_keywords = [keyword.lower() for keyword in keywords]
+
+    for sentence in sentences:
+        normalized = sentence.lower()
+        if any(keyword in normalized for keyword in lowered_keywords):
+            matches.append(sentence)
+
+    return matches
+
+
+def split_sentences(text):
+    paragraphs = split_paragraphs(text)
+    sentences = []
+
+    for paragraph in paragraphs:
+        if paragraph.startswith("- "):
+            sentences.append(paragraph[2:].strip())
+            continue
+
+        sentences.extend(SENTENCE_PATTERN.split(paragraph))
+
+    return [
+        sentence.strip()
+        for sentence in sentences
+        if sentence.strip()
+    ]
+
+
+def split_paragraphs(text):
+    paragraphs = []
+    current_lines = []
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped == "---":
+            if current_lines:
+                paragraphs.append(" ".join(current_lines))
+                current_lines = []
+            continue
+
+        if stripped.startswith("#"):
+            continue
+
+        current_lines.append(stripped)
+
+    if current_lines:
+        paragraphs.append(" ".join(current_lines))
+
+    return paragraphs
+
+
+def limit_words(text, limit):
+    words = text.split()
+
+    if len(words) <= limit:
+        return text
+
+    return " ".join(words[:limit]).rstrip(" ,;:") + "."
+
+
+def word_count(text):
+    return len(text.split())
+
+
+def clean_whitespace(text):
+    return " ".join(text.split())
+
+
+def clean_markdown(text):
+    cleaned = text.strip()
+    cleaned = re.sub(r"^\s*[-*]\s+", "", cleaned)
+    cleaned = re.sub(r"\*\*(.*?)\*\*", r"\1", cleaned)
+    cleaned = re.sub(r"`(.*?)`", r"\1", cleaned)
+    cleaned = cleaned.replace("###", "").strip()
+    return clean_whitespace(cleaned)
 
 
 def build_answer_bullets(answers):

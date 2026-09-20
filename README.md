@@ -103,14 +103,20 @@ python src/case_manager.py resume case_YYYYMMDD_HHMMSS
 
 Saved case files can be listed, inspected, and resumed. Resuming a case asks follow-up questions from the latest assessment, saves a new report, and writes a child JSON case file linked to the parent case.
 
-## Generate A Technical Report Draft
+## Generate A T661 Technical Report Draft
 
 ```bash
 python src/case_manager.py report case_YYYYMMDD_HHMMSS
 python src/technical_report.py case_YYYYMMDD_HHMMSS --show
 ```
 
-The technical report generator turns a saved case file into a Markdown SR&ED technical report draft under `technical_reports/`. The first version is intentionally structured and testable: it drafts the main SR&ED sections from the saved intake record, flags gaps, and calculates report readiness for analyst review.
+The technical report generator turns a saved case file into a Markdown SR&ED technical report draft under `technical_reports/`. The main output is structured around Form T661 Part 2, Section B:
+
+- line 242: scientific or technological uncertainties, maximum 350 words
+- line 244: work performed in the tax year, maximum 700 words
+- line 246: scientific or technological advancements, maximum 350 words
+
+The generator also includes word counts, gap warnings, report readiness, and supporting analyst notes. Questionnaire-style inputs are parsed into the T661 lines before the broader reviewer notes are shown.
 
 ## Add CRA-Grounded Training Examples
 
@@ -134,6 +140,7 @@ Guided intake agent checks: PASS
 Reusable JSON case file checks: PASS
 Case manager checks: PASS
 Technical report generator checks: PASS
+T661 project description checks: PASS
 ```
 
 This accuracy is only for the current controlled test set. More diverse examples are still needed before treating the model as reliable.
@@ -144,6 +151,6 @@ This accuracy is only for the current controlled test set. More diverse examples
 - separate data validation into a reusable module or test file
 - add analyst-facing examples and confidence interpretation
 - add case export formats for analyst handoff
-- improve technical report wording through real case testing
+- improve T661 line 242/244/246 wording through real case testing
 - consider a small Streamlit interface for guided review
 - document model limitations and human review requirements

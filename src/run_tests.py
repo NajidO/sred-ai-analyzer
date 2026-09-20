@@ -23,9 +23,13 @@ from case_store import (
 from questions import generate_followup_questions, generate_cra_reference_questions
 from rules import extract_signals
 from technical_report import (
+    T661_LINE_WORD_LIMITS,
     assess_report_readiness,
     build_technical_report,
+    build_t661_project_description,
+    extract_questionnaire_sections,
     generate_technical_report_for_case,
+    word_count,
 )
 
 
@@ -416,8 +420,12 @@ def validate_technical_report_layer(model):
             raise AssertionError(f"Technical report is missing section: {section}")
 
     required_fragments = [
-        "# SR&ED Technical Report Draft",
+        "# SR&ED T661 Technical Report Draft",
         f"Case ID: {case_path.stem}",
+        "T661 Project Description Draft",
+        "Line 242 - What scientific or technological uncertainties did you attempt to overcome?",
+        "Line 244 - What work did you perform in the tax year",
+        "Line 246 - What scientific or technological advancements",
         "Report readiness",
         "Standard database indexing did not resolve write latency",
         "Supporting Evidence Inventory",
@@ -442,6 +450,123 @@ def validate_technical_report_layer(model):
     print("PASS: built structured technical report draft")
     print("PASS: saved Markdown technical report")
     print("PASS: calculated report readiness")
+
+
+def validate_t661_questionnaire_drafting(model):
+    questionnaire_text = """
+# SR&ED Technical Project Questionnaire
+
+## 1. Please provide an overview of the project. What were you trying to develop or improve?
+
+The objective was to develop a compact scanning electron microscopy platform with a shorter electron-optical column while maintaining approximately 10 nm imaging resolution and low image drift.
+
+## 2. What was the technology you had available at the beginning of the project?
+
+The company had an existing larger SEM design and understood standard focusing, stigmation, detector gain, vacuum control, and drift correction methods. These techniques worked in the larger architecture because there was more physical space for lens assemblies, shielding, and thermal isolation.
+
+## 3. What specific technological challenge or uncertainty did you face?
+
+The uncertainty was whether a beam with sufficient spot size, stability, and detector signal could be produced in the shortened column without unacceptable aberrations, thermal drift, magnetic hysteresis, and detector field interactions.
+
+## 4. Why could this not simply be solved using standard engineering methods or generally available knowledge?
+
+Published electron-optics references and supplier specifications did not provide a design that predicted the combined behaviour of the shortened integrated column. Established calculations could estimate individual parameters but did not accurately predict integrated beam stability after thermal, magnetic, mechanical, and detector effects interacted.
+
+## 5. What was the initial technological idea or hypothesis?
+
+The first hypothesis was that reducing pole-piece separation and increasing objective-lens excitation would compensate for the shorter electron-optical distance, while passive heat transfer would control the added temperature.
+
+## 6. Describe the first approach tested during the fiscal year.
+
+The team produced a shortened-column prototype and tested combinations of lens current, working distance, aperture diameter, and accelerating voltage. At 5 kV the prototype produced approximately 18-25 nm resolution. Higher objective current temporarily improved resolution to approximately 14-16 nm, but heating caused focus drift and repeatability problems. The scaled design was rejected.
+
+## 7. What did you try next and why?
+
+The team tested three pole-piece variants using electromagnetic simulations and prototype inserts. Variant C reduced objective-lens current by approximately 17% and achieved approximately 11-13 nm resolution, but drift remained approximately 25-35 nm/minute after ten minutes.
+
+## 8. How did the results change your understanding or lead to the next experiment?
+
+The team instrumented the objective assembly with temperature sensors and tested thermal mass and heat-spreading structures. Passive thermal changes improved drift to approximately 15-25 nm/minute but did not consistently meet the 10 nm/minute objective.
+
+## 9. Was there another hypothesis or approach after that?
+
+The team developed active compensation using temperature, commanded lens current, previous current state, and elapsed time. Combining model-based compensation with image-based drift estimation reduced steady-state apparent drift to approximately 6-9 nm/minute under reference conditions, but low-contrast samples remained problematic.
+
+## 10. Were there any other technical problems investigated?
+
+The team investigated secondary-electron detector geometry, detector bias, and shielding. A revised detector configuration improved SNR from approximately 6-8 to approximately 13-16 at comparable low beam current.
+
+## 11. What testing or analysis did you perform to determine whether the approaches worked?
+
+The team recorded accelerating voltage, beam current, lens current, working distance, aperture configuration, detector settings, temperature, image sequences, drift measurements, detector SNR, and simulation results.
+
+## 12. Summarize the major experimental results.
+
+Resolution improved from approximately 18-25 nm to approximately 11-13 nm. Drift under reference conditions improved from approximately 40-60 nm/minute to approximately 6-9 nm/minute. Detector SNR improved from approximately 6-8 to approximately 13-16, although not all conditions were resolved.
+
+## 13. What technological knowledge did you gain during the fiscal year?
+
+The team determined that scaling the electron-optical geometry and increasing objective-lens excitation was not viable because thermal and magnetic-history effects prevented stable operation. The team gained knowledge about pole-piece return path geometry, lens excitation history, thermal state, and detector electric-field interactions.
+
+## 14. What measurable improvements resulted from the experimental work?
+
+The later prototype achieved approximately 11-13 nm resolution, reduced objective-lens excitation by approximately 17%, reduced steady-state drift to approximately 6-9 nm/minute under reference conditions, and increased detector SNR to approximately 13-16.
+
+## 15. Did any failed work generate useful technological knowledge?
+
+The failed high-current, high-thermal-mass, linear temperature compensation, and first annular detector approaches showed which mechanisms were insufficient and changed the understanding of the compact architecture.
+
+## 16. What remained technologically uncertain at the end of the fiscal year?
+
+Drift compensation for low-contrast samples and performance across the complete voltage, working-distance, and sample-type envelope remained technologically uncertain.
+"""
+    analysis = analyze_text(questionnaire_text, model)
+    session = {
+        "initial_analysis": analysis,
+        "questions": [],
+        "answers": [],
+        "updated_text": questionnaire_text,
+        "final_analysis": analysis,
+        "report_path": BASE_DIR / "reports" / "t661_test_report.txt",
+    }
+
+    with TemporaryDirectory() as temp_dir:
+        base_dir = Path(temp_dir)
+        case_path = save_intake_case_file(session, base_dir)
+        case_data = load_case(case_path.stem, base_dir)
+        source_sections = extract_questionnaire_sections(questionnaire_text)
+        t661_sections = build_t661_project_description(
+            case_data,
+            case_data["final_assessment"],
+            source_sections,
+        )
+        report_path = generate_technical_report_for_case(case_path.stem, base_dir)
+        report_text = report_path.read_text(encoding="utf-8")
+
+    if len(source_sections) < 16:
+        raise AssertionError("Questionnaire parser did not capture the numbered sections.")
+
+    for line_number, line in t661_sections.items():
+        if not line["draft"]:
+            raise AssertionError(f"T661 line {line_number} draft is empty.")
+
+        if word_count(line["draft"]) > T661_LINE_WORD_LIMITS[line_number]:
+            raise AssertionError(f"T661 line {line_number} exceeds its word limit.")
+
+    if "18-25 nm" not in t661_sections["244"]["draft"]:
+        raise AssertionError("Line 244 did not include experimental measurement detail.")
+
+    if "thermal and magnetic-history effects" not in t661_sections["246"]["draft"]:
+        raise AssertionError("Line 246 did not include technological learning detail.")
+
+    if "## T661 Project Description Draft" not in report_text:
+        raise AssertionError("Rendered report is missing the T661 section.")
+
+    print("\nT661 project description checks")
+    print("=" * 80)
+    print("PASS: parsed numbered questionnaire sections")
+    print("PASS: drafted T661 lines 242, 244, and 246")
+    print("PASS: kept T661 drafts within CRA word limits")
 
 
 training_df = validate_training_csv()
@@ -532,3 +657,4 @@ validate_agent_assessment_layer()
 validate_intake_agent_layer(model)
 validate_case_manager_layer(model)
 validate_technical_report_layer(model)
+validate_t661_questionnaire_drafting(model)
