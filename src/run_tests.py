@@ -560,6 +560,15 @@ Drift compensation for low-contrast samples and performance across the complete 
     if "thermal and magnetic-history effects" not in t661_sections["246"]["draft"]:
         raise AssertionError("Line 246 did not include technological learning detail.")
 
+    if "TU1 -" not in t661_sections["242"]["draft"]:
+        raise AssertionError("Line 242 did not include technical uncertainty labels.")
+
+    if "SIS1 for TU1" not in t661_sections["244"]["draft"]:
+        raise AssertionError("Line 244 did not include systematic investigation labels.")
+
+    if "TU1/SIS1 advancement" not in t661_sections["246"]["draft"]:
+        raise AssertionError("Line 246 did not link advancements to TU/SIS labels.")
+
     if "## T661 Project Description Draft" not in report_text:
         raise AssertionError("Rendered report is missing the T661 section.")
 
@@ -568,6 +577,7 @@ Drift compensation for low-contrast samples and performance across the complete 
     print("PASS: parsed numbered questionnaire sections")
     print("PASS: drafted T661 lines 242, 244, and 246")
     print("PASS: kept T661 drafts within CRA word limits")
+    print("PASS: sectioned T661 drafts with TU/SIS labels when useful")
 
 
 def validate_report_strategy_layer(model):

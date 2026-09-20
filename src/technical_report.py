@@ -59,15 +59,16 @@ def build_technical_report(case_data):
     evidence_map = final_assessment["evidence_map"]
     readiness = assess_report_readiness(final_assessment)
     source_sections = extract_questionnaire_sections(case_data.get("updated_text", ""))
-    t661_project_description = build_t661_project_description(
-        case_data,
-        final_assessment,
-        source_sections,
-    )
     report_strategy = build_report_strategy(
         case_data,
         final_assessment,
         source_sections,
+    )
+    t661_project_description = build_t661_project_description(
+        case_data,
+        final_assessment,
+        source_sections,
+        report_strategy,
     )
 
     return {
@@ -95,14 +96,29 @@ def build_technical_report(case_data):
     }
 
 
-def build_t661_project_description(case_data, final_assessment, source_sections=None):
+def build_t661_project_description(
+    case_data,
+    final_assessment,
+    source_sections=None,
+    report_strategy=None,
+):
     source_sections = source_sections or extract_questionnaire_sections(
         case_data.get("updated_text", "")
     )
+    report_strategy = report_strategy or build_report_strategy(
+        case_data,
+        final_assessment,
+        source_sections,
+    )
 
-    line_242 = build_t661_line_242(case_data, final_assessment, source_sections)
-    line_244 = build_t661_line_244(case_data, final_assessment, source_sections)
-    line_246 = build_t661_line_246(case_data, final_assessment, source_sections)
+    if should_section_t661_lines(report_strategy):
+        line_242 = build_sectioned_t661_line_242(source_sections, report_strategy)
+        line_244 = build_sectioned_t661_line_244(source_sections, report_strategy)
+        line_246 = build_sectioned_t661_line_246(source_sections, report_strategy)
+    else:
+        line_242 = build_t661_line_242(case_data, final_assessment, source_sections)
+        line_244 = build_t661_line_244(case_data, final_assessment, source_sections)
+        line_246 = build_t661_line_246(case_data, final_assessment, source_sections)
 
     return {
         "242": build_t661_line("242", line_242),
@@ -113,7 +129,7 @@ def build_t661_project_description(case_data, final_assessment, source_sections=
 
 def build_t661_line(line_number, text):
     limit = T661_LINE_WORD_LIMITS[line_number]
-    draft = limit_words(clean_whitespace(text), limit)
+    draft = limit_words(clean_t661_text(text), limit)
     count = word_count(draft)
     warnings = []
 
@@ -131,6 +147,265 @@ def build_t661_line(line_number, text):
         "draft": draft,
         "warnings": warnings,
     }
+
+
+def should_section_t661_lines(report_strategy):
+    structure_mode = report_strategy["selected_structure"]["mode"]
+    return structure_mode in {
+        "split_by_uncertainty_stream",
+        "hybrid_t661_with_two_streams",
+    }
+
+
+def build_sectioned_t661_line_242(source_sections, report_strategy):
+    baseline = build_standard_practice_baseline_summary(source_sections)
+    lines = [
+        (
+            "The project involved multiple related technological uncertainties that "
+            "were best separated for analysis:"
+        ),
+    ]
+
+    if baseline:
+        lines.append(f"Standard practice baseline: {baseline}")
+
+    for stream in report_strategy["streams"]:
+        lines.append(f"{stream['id']} - {stream['title']}: {stream['uncertainty']}")
+
+    return "\n\n".join(lines)
+
+
+def build_sectioned_t661_line_244(source_sections, report_strategy):
+    lines = []
+
+    for index, stream in enumerate(report_strategy["streams"], start=1):
+        sis_label = f"SIS{index}"
+        summary = build_stream_work_summary(source_sections, stream)
+        lines.append(
+            f"{sis_label} for {stream['id']} - {stream['title']}: {summary}"
+        )
+
+    return "\n\n".join(lines)
+
+
+def build_sectioned_t661_line_246(source_sections, report_strategy):
+    lines = []
+
+    for index, stream in enumerate(report_strategy["streams"], start=1):
+        sis_label = f"SIS{index}"
+        summary = build_stream_advancement_summary(source_sections, stream)
+        lines.append(
+            f"{stream['id']}/{sis_label} advancement: {summary}"
+        )
+
+    return "\n\n".join(lines)
+
+
+def build_standard_practice_baseline_summary(source_sections):
+    paragraphs = get_relevant_paragraphs(
+        source_sections,
+        [2, 4],
+        [
+            "existing",
+            "standard",
+            "published",
+            "supplier",
+            "could not",
+            "did not",
+            "not provide",
+            "scale",
+            "larger",
+        ],
+        max_items=3,
+        max_per_section=2,
+    )
+    return " ".join(paragraphs)
+
+
+STREAM_SECTION_MAP = {
+    "TU1": {
+        "work_sections": [6, 7, 11, 12],
+        "advancement_sections": [13, 14, 15],
+        "keywords": [
+            "resolution",
+            "focusing",
+            "pole-piece",
+            "pole piece",
+            "objective",
+            "lens",
+            "working distance",
+            "aperture",
+            "simulation",
+            "prototype",
+        ],
+        "advancement_keywords": [
+            "pole-piece",
+            "pole piece",
+            "gap geometry",
+            "return path",
+            "resolution",
+            "objective-lens excitation",
+        ],
+    },
+    "TU2": {
+        "work_sections": [8, 9, 11, 12],
+        "advancement_sections": [13, 14, 15, 16],
+        "keywords": [
+            "thermal",
+            "temperature",
+            "drift",
+            "hysteresis",
+            "history",
+            "compensation",
+            "focus correction",
+            "beam displacement",
+            "low-contrast",
+        ],
+        "advancement_keywords": [
+            "temperature",
+            "thermal",
+            "drift",
+            "magnetic-history",
+            "lens-current history",
+            "compensation",
+            "focus shift",
+            "low-contrast",
+        ],
+    },
+    "TU3": {
+        "work_sections": [10, 11, 12],
+        "advancement_sections": [13, 14, 15],
+        "keywords": [
+            "detector",
+            "snr",
+            "signal-to-noise",
+            "secondary-electron",
+            "bias",
+            "shielding",
+            "collection",
+            "beam current",
+            "charging",
+        ],
+        "advancement_keywords": [
+            "detector",
+            "detector collection",
+            "detector snr",
+            "signal-to-noise",
+            "bias",
+            "shielding",
+            "annular detector",
+        ],
+    },
+    "TU4": {
+        "work_sections": [6, 7, 8, 9, 11, 12],
+        "advancement_sections": [13, 14, 15, 16],
+        "keywords": [
+            "algorithm",
+            "software",
+            "latency",
+            "database",
+            "queue",
+            "accuracy",
+            "scalability",
+            "benchmark",
+        ],
+        "advancement_keywords": [
+            "algorithm",
+            "software",
+            "latency",
+            "database",
+            "queue",
+            "accuracy",
+            "scalability",
+            "benchmark",
+        ],
+    },
+}
+
+
+def build_stream_work_summary(source_sections, stream):
+    config = STREAM_SECTION_MAP.get(stream["id"], {})
+    paragraphs = get_relevant_paragraphs(
+        source_sections,
+        config.get("work_sections", [6, 7, 8, 9, 10, 11, 12]),
+        config.get("keywords", stream["evidence_terms"]),
+        max_items=4,
+        max_per_section=2,
+    )
+
+    if paragraphs:
+        return " ".join(paragraphs)
+
+    return stream["investigation"]
+
+
+def build_stream_advancement_summary(source_sections, stream):
+    config = STREAM_SECTION_MAP.get(stream["id"], {})
+    paragraphs = get_stream_specific_paragraphs(
+        source_sections,
+        config.get("advancement_sections", [13, 14, 15, 16]),
+        config.get("advancement_keywords", config.get("keywords", stream["evidence_terms"])),
+        max_items=3,
+    )
+
+    if paragraphs:
+        return " ".join(paragraphs)
+
+    return (
+        "The work generated technical learning connected to this uncertainty, "
+        "but the specific advancement should be confirmed with the project team."
+    )
+
+
+def get_stream_specific_paragraphs(source_sections, section_numbers, stream_keywords, max_items):
+    advancement_terms = [
+        "determined",
+        "established",
+        "learned",
+        "gained",
+        "improved",
+        "reduced",
+        "increased",
+        "failed",
+        "not viable",
+        "not sufficient",
+        "showed",
+    ]
+    items = []
+
+    for number in section_numbers:
+        section = source_sections.get(number)
+        if not section:
+            continue
+
+        for sentence in split_sentences(section["text"]):
+            cleaned = clean_markdown(sentence)
+            normalized = cleaned.lower()
+            has_stream_term = any(
+                keyword in normalized
+                for keyword in stream_keywords
+            )
+            has_advancement_term = any(
+                term in normalized
+                for term in advancement_terms
+            )
+
+            if has_stream_term and has_advancement_term and cleaned not in items:
+                items.append(cleaned)
+
+            if len(items) >= max_items:
+                return items
+
+    if not items:
+        return get_relevant_paragraphs(
+            source_sections,
+            section_numbers,
+            stream_keywords,
+            max_items=max_items,
+            max_per_section=2,
+        )
+
+    return items
 
 
 def build_t661_line_242(case_data, final_assessment, source_sections):
@@ -889,6 +1164,24 @@ def word_count(text):
 
 def clean_whitespace(text):
     return " ".join(text.split())
+
+
+def clean_t661_text(text):
+    cleaned_lines = []
+    previous_blank = False
+
+    for line in text.splitlines():
+        cleaned_line = clean_whitespace(line)
+        if not cleaned_line:
+            if not previous_blank:
+                cleaned_lines.append("")
+            previous_blank = True
+            continue
+
+        cleaned_lines.append(cleaned_line)
+        previous_blank = False
+
+    return "\n".join(cleaned_lines).strip()
 
 
 def clean_markdown(text):

@@ -120,6 +120,8 @@ The generator also includes word counts, gap warnings, report readiness, and sup
 
 Before drafting the T661 lines, the agent adds a drafting strategy and rationale. It decides whether the source facts are better handled as one integrated narrative or split into TU/SIS streams, identifies candidate technical uncertainty streams, and asks more specific follow-up questions tied to detected project facts.
 
+When the agent decides that splitting is clearer, the T661 draft itself is sectioned with labels such as `TU1`, `TU2`, `SIS1`, and `SIS2` inside lines 242, 244, and 246 so the submitted technical narrative can separate overlapping uncertainties and investigations.
+
 ## Add CRA-Grounded Training Examples
 
 ```bash
