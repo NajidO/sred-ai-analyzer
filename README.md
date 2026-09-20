@@ -118,6 +118,8 @@ The technical report generator turns a saved case file into a Markdown SR&ED tec
 
 The generator also includes word counts, gap warnings, report readiness, and supporting analyst notes. Questionnaire-style inputs are parsed into the T661 lines before the broader reviewer notes are shown.
 
+Before drafting the T661 lines, the agent adds a drafting strategy and rationale. It decides whether the source facts are better handled as one integrated narrative or split into TU/SIS streams, identifies candidate technical uncertainty streams, and asks more specific follow-up questions tied to detected project facts.
+
 ## Add CRA-Grounded Training Examples
 
 ```bash
@@ -141,6 +143,7 @@ Reusable JSON case file checks: PASS
 Case manager checks: PASS
 Technical report generator checks: PASS
 T661 project description checks: PASS
+Report strategy planner checks: PASS
 ```
 
 This accuracy is only for the current controlled test set. More diverse examples are still needed before treating the model as reliable.
@@ -152,5 +155,6 @@ This accuracy is only for the current controlled test set. More diverse examples
 - add analyst-facing examples and confidence interpretation
 - add case export formats for analyst handoff
 - improve T661 line 242/244/246 wording through real case testing
+- improve report strategy planning with more domains and examples
 - consider a small Streamlit interface for guided review
 - document model limitations and human review requirements

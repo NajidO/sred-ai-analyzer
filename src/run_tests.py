@@ -22,6 +22,7 @@ from case_store import (
 )
 from questions import generate_followup_questions, generate_cra_reference_questions
 from rules import extract_signals
+from report_strategy import build_report_strategy
 from technical_report import (
     T661_LINE_WORD_LIMITS,
     assess_report_readiness,
@@ -569,6 +570,91 @@ Drift compensation for low-contrast samples and performance across the complete 
     print("PASS: kept T661 drafts within CRA word limits")
 
 
+def validate_report_strategy_layer(model):
+    questionnaire_text = """
+# SR&ED Technical Project Questionnaire
+
+## 1. Please provide an overview of the project. What were you trying to develop or improve?
+
+The objective was to develop a compact scanning electron microscopy platform with a shorter electron-optical column while maintaining 10 nm imaging resolution, low image drift, and acceptable detector SNR.
+
+## 3. What specific technological challenge or uncertainty did you face?
+
+The uncertainty involved objective lens geometry, pole-piece spacing, thermal drift, magnetic hysteresis, active compensation, detector bias, shielding, and secondary-electron signal-to-noise ratio in the compact chamber.
+
+## 6. Describe the first approach tested during the fiscal year.
+
+The team tested pole-piece geometry, objective-lens current, aperture size, working distance, and accelerating voltage. Some configurations improved resolution but failed due to drift and focus repeatability.
+
+## 8. How did the results change your understanding or lead to the next experiment?
+
+The team tested thermal mass, heat-spreading structures, temperature sensing, and drift measurements. Passive thermal management did not consistently meet the drift target.
+
+## 9. Was there another hypothesis or approach after that?
+
+The team tested active compensation using lens temperature, current history, elapsed time, focus correction, and image-based drift estimation.
+
+## 10. Were there any other technical problems investigated?
+
+The team tested detector geometry, detector distance, bias voltage, shielding, beam current, charging effects, and SNR measurements.
+"""
+    analysis = analyze_text(questionnaire_text, model)
+    session = {
+        "initial_analysis": analysis,
+        "questions": [],
+        "answers": [],
+        "updated_text": questionnaire_text,
+        "final_analysis": analysis,
+        "report_path": BASE_DIR / "reports" / "strategy_test_report.txt",
+    }
+
+    with TemporaryDirectory() as temp_dir:
+        base_dir = Path(temp_dir)
+        case_path = save_intake_case_file(session, base_dir)
+        case_data = load_case(case_path.stem, base_dir)
+        source_sections = extract_questionnaire_sections(questionnaire_text)
+        strategy = build_report_strategy(
+            case_data,
+            case_data["final_assessment"],
+            source_sections,
+        )
+        report = build_technical_report(case_data)
+        report_path = generate_technical_report_for_case(case_path.stem, base_dir)
+        report_text = report_path.read_text(encoding="utf-8")
+
+    if strategy["selected_structure"]["mode"] != "split_by_uncertainty_stream":
+        raise AssertionError("Report strategy did not choose TU/SIS splitting.")
+
+    if len(strategy["streams"]) < 3:
+        raise AssertionError("Report strategy did not detect multiple technical streams.")
+
+    expected_streams = {"TU1", "TU2", "TU3"}
+    detected_streams = {
+        stream["id"]
+        for stream in strategy["streams"]
+    }
+    if not expected_streams.issubset(detected_streams):
+        raise AssertionError("Report strategy did not detect the expected SEM streams.")
+
+    if not any("pole-piece variants" in question for question in strategy["specific_questions"]):
+        raise AssertionError("Report strategy did not generate stream-specific questions.")
+
+    if "Drafting Strategy And Rationale" not in report_text:
+        raise AssertionError("Rendered report is missing strategy rationale.")
+
+    if "Candidate TU/SIS Streams" not in report_text:
+        raise AssertionError("Rendered report is missing candidate streams.")
+
+    if report["report_strategy"]["selected_structure"]["mode"] != "split_by_uncertainty_stream":
+        raise AssertionError("Built report did not include the selected strategy.")
+
+    print("\nReport strategy planner checks")
+    print("=" * 80)
+    print("PASS: selected TU/SIS split when multiple uncertainties were detected")
+    print("PASS: generated strategy rationale")
+    print("PASS: generated specific stream-level follow-up questions")
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -658,3 +744,4 @@ validate_intake_agent_layer(model)
 validate_case_manager_layer(model)
 validate_technical_report_layer(model)
 validate_t661_questionnaire_drafting(model)
+validate_report_strategy_layer(model)

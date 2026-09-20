@@ -5,6 +5,7 @@ from pathlib import Path
 
 from analysis_engine import BASE_DIR
 from case_store import load_case
+from report_strategy import build_report_strategy
 
 
 TECHNICAL_REPORTS_DIR = "technical_reports"
@@ -63,6 +64,11 @@ def build_technical_report(case_data):
         final_assessment,
         source_sections,
     )
+    report_strategy = build_report_strategy(
+        case_data,
+        final_assessment,
+        source_sections,
+    )
 
     return {
         "title": "SR&ED T661 Technical Report Draft",
@@ -72,6 +78,7 @@ def build_technical_report(case_data):
         "source_case_path": case_data.get("_path", ""),
         "readiness": readiness,
         "metadata": build_metadata(case_data, final_assessment, agent_assessment),
+        "report_strategy": report_strategy,
         "t661_project_description": t661_project_description,
         "sections": [
             build_executive_summary(final_assessment, agent_assessment, readiness),
@@ -643,6 +650,11 @@ def render_technical_report(report):
         f"- Readiness: {report['readiness']['level']}",
         f"- Readiness score: {report['readiness']['score']}%",
         "",
+    ])
+
+    append_strategy_lines(lines, report["report_strategy"])
+
+    lines.extend([
         "## T661 Project Description Draft",
         "",
         (
@@ -699,6 +711,55 @@ def render_technical_report(report):
             lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def append_strategy_lines(lines, strategy):
+    lines.extend([
+        "## Drafting Strategy And Rationale",
+        "",
+        f"Recommended structure: {strategy['selected_structure']['label']}",
+        "",
+    ])
+
+    for reason in strategy["rationale"]:
+        lines.append(f"- {reason}")
+    lines.append("")
+
+    if strategy["streams"]:
+        lines.extend([
+            "### Candidate TU/SIS Streams",
+            "",
+        ])
+
+        for stream in strategy["streams"]:
+            lines.append(f"#### {stream['id']}: {stream['title']}")
+            lines.append("")
+            lines.append(f"Uncertainty: {stream['uncertainty']}")
+            lines.append("")
+            lines.append(f"Systematic investigation: {stream['investigation']}")
+            lines.append("")
+
+            if stream["evidence_terms"]:
+                lines.append("Detected source terms:")
+                for term in stream["evidence_terms"]:
+                    lines.append(f"- {term}")
+                lines.append("")
+
+            if stream["source_questions"]:
+                lines.append("Relevant source sections:")
+                for source_question in stream["source_questions"]:
+                    lines.append(f"- {source_question}")
+                lines.append("")
+
+    if strategy["specific_questions"]:
+        lines.extend([
+            "### Specific Follow-Up Questions",
+            "",
+        ])
+
+        for question in strategy["specific_questions"]:
+            lines.append(f"- {question}")
+        lines.append("")
 
 
 def extract_questionnaire_sections(text):
