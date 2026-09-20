@@ -39,6 +39,7 @@ src/
   train_sred_classifier.py
   run_tests.py
   intake_agent.py
+  llm_report_agent.py
   predict_sred.py
   cra_guideline_checker.py
   cra_reference.py
@@ -121,6 +122,47 @@ The generator also includes word counts, gap warnings, report readiness, and sup
 Before drafting the T661 lines, the agent adds a drafting strategy and rationale. It decides whether the source facts are better handled as one integrated narrative or split into TU/SIS streams, identifies candidate technical uncertainty streams, and asks more specific follow-up questions tied to detected project facts.
 
 When the agent decides that splitting is clearer, the T661 draft itself is sectioned with labels such as `TU1`, `TU2`, `SIS1`, and `SIS2` inside lines 242, 244, and 246 so the submitted technical narrative can separate overlapping uncertainties and investigations.
+
+## Run A Local AI Capability Test
+
+The optional LLM report agent combines the existing local classifier, CRA checks,
+evidence mapping, and strategy planner with an OpenAI reasoning pass. It runs from
+your Mac and saves an editable Markdown report; no website or hosting is required.
+
+Install the updated requirements and pass a UTF-8 text or Markdown project description:
+
+```bash
+venv/bin/python -m pip install -r requirements.txt
+venv/bin/python src/llm_report_agent.py /path/to/project.txt --show
+```
+
+If `OPENAI_API_KEY` is not already set, the command asks for the key securely. Terminal
+does not display characters while you paste or type the key; press Return when finished.
+The key is used for that process only and is not saved. Do not place it in source code
+or commit it to GitHub.
+
+You can alternatively set the key for the current shell session first:
+
+```bash
+export OPENAI_API_KEY="your-api-key"
+```
+
+The default model is `gpt-5.6-terra`. Override it for a comparison without changing code:
+
+```bash
+OPENAI_MODEL="gpt-5.6-sol" venv/bin/python src/llm_report_agent.py /path/to/project.txt --show
+```
+
+To confirm that the local classifier and report preparation work without making a paid
+API request:
+
+```bash
+venv/bin/python src/llm_report_agent.py /path/to/project.txt --dry-run
+```
+
+The AI output is constrained to structured fields, checked against the official T661
+word limits, scanned for measurements that do not appear in the supplied source, and
+clearly marked as a draft requiring human verification.
 
 ## Add CRA-Grounded Training Examples
 

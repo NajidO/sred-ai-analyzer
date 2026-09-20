@@ -14,6 +14,12 @@ from cra_guideline_checker import check_against_cra_guidelines
 from evidence_mapper import map_to_sred_framework
 from explanation import generate_label_explanation
 from intake_agent import build_updated_description, select_intake_questions
+from llm_report_agent import (
+    build_model_input,
+    find_new_measurements,
+    normalize_report_payload,
+    render_llm_report,
+)
 from case_store import (
     list_case_files,
     load_case,
@@ -665,6 +671,91 @@ The team tested detector geometry, detector distance, bias voltage, shielding, b
     print("PASS: generated specific stream-level follow-up questions")
 
 
+def validate_llm_report_agent_layer():
+    source_text = (
+        "The team targeted 10 nm resolution. Standard scaling was insufficient, "
+        "so it tested revised lens geometry and recorded the results."
+    )
+    payload = {
+        "overall_assessment": "The supplied facts describe a testable technical issue.",
+        "eligibility_signal": "possible_candidate",
+        "confidence": "medium",
+        "structure_mode": "integrated_narrative",
+        "structure_rationale": "One uncertainty stream is clearest for this short record.",
+        "technical_streams": [
+            {
+                "id": "TU1",
+                "title": "Lens geometry and resolution",
+                "uncertainty": "Whether revised geometry could achieve 10 nm resolution.",
+                "standard_practice_gap": "Standard scaling was reported as insufficient.",
+                "systematic_investigation": "The team tested revised lens geometry.",
+                "advancement": "The result requires analyst confirmation.",
+                "source_support": ["The source states a 10 nm target."],
+                "evidence_gaps": ["Provide the recorded test results."],
+            }
+        ],
+        "line_242": "The team did not know whether revised geometry could achieve 10 nm resolution.",
+        "line_244": "The team tested revised lens geometry and recorded the results.",
+        "line_246": "The work sought knowledge about the effect of lens geometry on resolution.",
+        "follow_up_questions": [
+            {
+                "question": "Which lens geometries were compared?",
+                "why_it_matters": "The alternatives establish systematic investigation.",
+                "examples_to_check": ["Design files", "Test matrix", "Image results"],
+            }
+        ],
+        "factual_risks": [],
+        "review_notes": ["Confirm every statement with project records."],
+    }
+    context = {
+        "project_source": source_text,
+        "local_analysis": {"prediction": "borderline"},
+        "local_strategy": {
+            "selected_structure": {"mode": "chronological_integrated"},
+            "rationale": ["The local planner detected one stream."],
+        },
+        "local_t661_baseline": {},
+    }
+
+    model_input = build_model_input(context)
+    if source_text not in model_input or "LOCAL ANALYZER CONTEXT" not in model_input:
+        raise AssertionError("LLM model input omitted required context.")
+
+    report = normalize_report_payload(payload, source_text)
+    for line_number, line in report["t661_lines"].items():
+        if word_count(line["draft"]) > T661_LINE_WORD_LIMITS[line_number]:
+            raise AssertionError(f"AI Line {line_number} exceeds its word limit.")
+
+    new_measurements = find_new_measurements(source_text, "The later test used 12 kV.")
+    if "12 kv" not in new_measurements:
+        raise AssertionError("Unsupported measurement detection missed a new value.")
+
+    report_text = render_llm_report(
+        report,
+        context,
+        "test-model",
+        usage={"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+    )
+    required_fragments = [
+        "AI-Assisted SR&ED Capability Test",
+        "Line 242",
+        "TU1 - Lens geometry and resolution",
+        "Which lens geometries were compared?",
+        "Input tokens: 100",
+    ]
+    for fragment in required_fragments:
+        if fragment not in report_text:
+            raise AssertionError(f"Rendered AI report is missing: {fragment}")
+
+    print("\nLLM report agent checks")
+    print("=" * 80)
+    print("PASS: built grounded model input")
+    print("PASS: validated structured report output")
+    print("PASS: enforced T661 word limits locally")
+    print("PASS: flagged unsupported measurements")
+    print("PASS: rendered analyst-review Markdown")
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -755,3 +846,4 @@ validate_case_manager_layer(model)
 validate_technical_report_layer(model)
 validate_t661_questionnaire_drafting(model)
 validate_report_strategy_layer(model)
+validate_llm_report_agent_layer()
