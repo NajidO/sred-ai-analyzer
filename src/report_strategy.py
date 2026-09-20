@@ -63,12 +63,13 @@ STREAM_DEFINITIONS = [
                 "drift measurements before and after each compensation approach?"
             ),
             (
-                "For TU2, where did the linear temperature correction fail, and what operating "
-                "sequences showed that lens-current history mattered?"
+                "For TU2, did the temperature-based correction assume a linear relationship? "
+                "If so, where did that assumption fail, and did any operating sequence suggest "
+                "that lens-current or magnetic history mattered?"
             ),
             (
-                "For TU2, what alternatives were tested or considered for low-contrast samples "
-                "where image-based drift correction was unreliable?"
+                "For TU2, was image-based drift correction tested or considered? If so, how did "
+                "it perform on low-contrast samples, and what alternatives were evaluated?"
             ),
         ],
     },
@@ -313,15 +314,47 @@ def build_strategy_questions(streams, final_assessment):
     for stream in streams:
         questions.extend(stream["suggested_questions"][:3])
 
+    questions.extend(build_cross_cutting_questions(streams))
+
     agent_assessment = final_assessment.get("agent_assessment", {})
     for question in agent_assessment.get("interview_focus", []):
-        if len(questions) >= 12:
+        if len(questions) >= 16:
             break
 
         if not is_generic_question(question):
             questions.append(question)
 
-    return unique_items(questions)[:12]
+    return unique_items(questions)[:16]
+
+
+def build_cross_cutting_questions(streams):
+    stream_ids = {stream["id"] for stream in streams}
+    questions = [
+        (
+            "What quantified baseline, target, and acceptance threshold applied to each "
+            "technical stream, and which metric showed that standard practice was insufficient?"
+        ),
+        (
+            "For each prototype or test, when did it occur within the fiscal year, what was "
+            "changed, what was observed, and what decision led to the next iteration?"
+        ),
+        (
+            "At fiscal year-end, which operating conditions or technical uncertainties remained "
+            "unresolved, and which work continued into the following year?"
+        ),
+        (
+            "Which records support each stream, such as design files, simulation versions, test "
+            "matrices, logs, images, temperature or current histories, and engineering notes?"
+        ),
+    ]
+
+    if {"TU1", "TU2", "TU3"}.issubset(stream_ids):
+        questions.append(
+            "What new technological knowledge was established separately for electron focusing, "
+            "thermal or magnetic stability, and detector field interaction?"
+        )
+
+    return questions
 
 
 def is_generic_question(question):

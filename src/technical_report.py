@@ -190,10 +190,26 @@ def build_sectioned_t661_line_244(source_sections, report_strategy):
 
 def build_sectioned_t661_line_246(source_sections, report_strategy):
     lines = []
+    shared_learning = build_shared_advancement_summary(
+        source_sections,
+        report_strategy["streams"],
+    )
+
+    if shared_learning:
+        lines.append(
+            "Shared learning reported in the source: "
+            + " ".join(shared_learning)
+            + " This cross-cutting statement does not establish the technological "
+            "advancement for each stream."
+        )
 
     for index, stream in enumerate(report_strategy["streams"], start=1):
         sis_label = f"SIS{index}"
-        summary = build_stream_advancement_summary(source_sections, stream)
+        summary = build_stream_advancement_summary(
+            source_sections,
+            stream,
+            excluded_sentences=shared_learning,
+        )
         lines.append(
             f"{stream['id']}/{sis_label} advancement: {summary}"
         )
@@ -325,28 +341,100 @@ STREAM_SECTION_MAP = {
 
 def build_stream_work_summary(source_sections, stream):
     config = STREAM_SECTION_MAP.get(stream["id"], {})
+    keywords = config.get("keywords", stream["evidence_terms"])
+    dynamic_work_sections = get_section_numbers_by_title(
+        source_sections,
+        [
+            "approach",
+            "work performed",
+            "work was performed",
+            "test",
+            "experiment",
+            "analysis",
+            "result",
+            "prototype",
+            "hypothesis",
+            "technical problem",
+        ],
+    )
+    work_sections = dynamic_work_sections or config.get(
+        "work_sections",
+        [6, 7, 8, 9, 10, 11, 12],
+    )
     paragraphs = get_relevant_paragraphs(
         source_sections,
-        config.get("work_sections", [6, 7, 8, 9, 10, 11, 12]),
-        config.get("keywords", stream["evidence_terms"]),
+        work_sections,
+        keywords,
         max_items=4,
         max_per_section=2,
+        fallback_to_section=False,
     )
+
+    if not paragraphs:
+        paragraphs = get_relevant_paragraphs(
+            source_sections,
+            sorted(source_sections),
+            keywords,
+            max_items=4,
+            max_per_section=2,
+            fallback_to_section=False,
+        )
 
     if paragraphs:
         return " ".join(paragraphs)
 
-    return stream["investigation"]
+    evidence_terms = ", ".join(stream.get("evidence_terms", []))
+    if evidence_terms:
+        return (
+            "The source indicates work related to "
+            f"{evidence_terms}, but it does not provide enough grounded detail to "
+            "describe the tests, observations, and sequence."
+        )
+
+    return (
+        "The source does not provide enough grounded detail to describe the tests, "
+        "observations, and sequence for this uncertainty."
+    )
 
 
-def build_stream_advancement_summary(source_sections, stream):
+def build_stream_advancement_summary(
+    source_sections,
+    stream,
+    excluded_sentences=None,
+):
+    excluded_sentences = set(excluded_sentences or [])
     config = STREAM_SECTION_MAP.get(stream["id"], {})
+    advancement_keywords = config.get(
+        "advancement_keywords",
+        config.get("keywords", stream["evidence_terms"]),
+    )
     paragraphs = get_stream_specific_paragraphs(
         source_sections,
         config.get("advancement_sections", [13, 14, 15, 16]),
-        config.get("advancement_keywords", config.get("keywords", stream["evidence_terms"])),
+        advancement_keywords,
         max_items=3,
     )
+
+    if not paragraphs:
+        dynamic_advancement_sections = get_section_numbers_by_title(
+            source_sections,
+            ["knowledge", "learn", "advancement"],
+        )
+        paragraphs = get_stream_specific_paragraphs(
+            source_sections,
+            dynamic_advancement_sections,
+            advancement_keywords,
+            max_items=3,
+            fallback_to_section=False,
+        )
+        paragraphs = [
+            paragraph
+            for paragraph in paragraphs
+            if paragraph not in excluded_sentences
+        ]
+
+        if paragraphs:
+            return " ".join(paragraphs)
 
     if paragraphs:
         return " ".join(paragraphs)
@@ -357,7 +445,50 @@ def build_stream_advancement_summary(source_sections, stream):
     )
 
 
-def get_stream_specific_paragraphs(source_sections, section_numbers, stream_keywords, max_items):
+def build_shared_advancement_summary(source_sections, streams):
+    section_numbers = get_section_numbers_by_title(
+        source_sections,
+        ["knowledge", "learn", "advancement"],
+    )
+    shared_sentences = []
+
+    for number in section_numbers:
+        for sentence in split_sentences(source_sections[number]["text"]):
+            cleaned = clean_markdown(sentence)
+            if count_matching_streams(cleaned, streams) >= 2:
+                shared_sentences.append(cleaned)
+
+    return list(dict.fromkeys(shared_sentences))[:3]
+
+
+def count_matching_streams(sentence, streams):
+    normalized = sentence.lower()
+    matches = 0
+
+    for stream in streams:
+        config = STREAM_SECTION_MAP.get(stream["id"], {})
+        keywords = config.get("keywords", stream.get("evidence_terms", []))
+        if any(keyword in normalized for keyword in keywords):
+            matches += 1
+
+    return matches
+
+
+def get_section_numbers_by_title(source_sections, title_terms):
+    return [
+        number
+        for number, section in sorted(source_sections.items())
+        if any(term in section["title"].lower() for term in title_terms)
+    ]
+
+
+def get_stream_specific_paragraphs(
+    source_sections,
+    section_numbers,
+    stream_keywords,
+    max_items,
+    fallback_to_section=True,
+):
     advancement_terms = [
         "determined",
         "established",
@@ -403,6 +534,7 @@ def get_stream_specific_paragraphs(source_sections, section_numbers, stream_keyw
             stream_keywords,
             max_items=max_items,
             max_per_section=2,
+            fallback_to_section=fallback_to_section,
         )
 
     return items
@@ -1067,7 +1199,14 @@ def extract_questionnaire_sections(text):
     return sections
 
 
-def get_relevant_paragraphs(sections, section_numbers, keywords, max_items, max_per_section=3):
+def get_relevant_paragraphs(
+    sections,
+    section_numbers,
+    keywords,
+    max_items,
+    max_per_section=3,
+    fallback_to_section=True,
+):
     items = []
 
     for number in section_numbers:
@@ -1076,7 +1215,7 @@ def get_relevant_paragraphs(sections, section_numbers, keywords, max_items, max_
             continue
 
         candidates = extract_relevant_sentences(section["text"], keywords)
-        if not candidates:
+        if not candidates and fallback_to_section:
             candidates = split_paragraphs(section["text"])[:2]
 
         section_items = 0

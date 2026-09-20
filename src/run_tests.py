@@ -9,12 +9,14 @@ import joblib
 import case_manager
 from analysis_engine import analyze_text
 from agent_assessment import build_agent_assessment
+from capability_eval import evaluate_expected_gaps
 from case_manager import build_resumed_description, inspect_case, list_cases, resume_case
 from cra_guideline_checker import check_against_cra_guidelines
 from evidence_mapper import map_to_sred_framework
 from explanation import generate_label_explanation
 from intake_agent import build_updated_description, select_intake_questions
 from llm_report_agent import (
+    build_local_context,
     build_model_input,
     find_new_measurements,
     normalize_report_payload,
@@ -756,6 +758,70 @@ def validate_llm_report_agent_layer():
     print("PASS: rendered analyst-review Markdown")
 
 
+def validate_incomplete_intake_capability(model):
+    source_path = BASE_DIR / "examples" / "incomplete_sem_client_draft.md"
+    expected_path = BASE_DIR / "examples" / "incomplete_sem_expected_gaps.json"
+    source_text = source_path.read_text(encoding="utf-8")
+    expected_gaps = json.loads(expected_path.read_text(encoding="utf-8"))
+    context = build_local_context(source_text, classifier=model)
+    evaluation = evaluate_expected_gaps(context, expected_gaps)
+    strategy = context["local_strategy"]
+    t661 = context["local_t661_baseline"]
+
+    if evaluation["detected"] != evaluation["total"]:
+        missed = [
+            result["id"]
+            for result in evaluation["results"]
+            if not result["detected"]
+        ]
+        raise AssertionError(f"Incomplete intake evaluation missed gaps: {missed}")
+
+    if strategy["selected_structure"]["mode"] != "split_by_uncertainty_stream":
+        raise AssertionError("Incomplete intake did not select a TU/SIS structure.")
+
+    detected_streams = {stream["id"] for stream in strategy["streams"]}
+    if not {"TU1", "TU2", "TU3"}.issubset(detected_streams):
+        raise AssertionError("Incomplete intake did not detect all three SEM streams.")
+
+    line_244 = t661["244"]["draft"]
+    line_246 = t661["246"]["draft"]
+    sis3_text = line_244.split("SIS3 for TU3", maxsplit=1)[-1]
+
+    if "segmented annular detector" in line_244.lower():
+        raise AssertionError("Line 244 invented an unsupported detector configuration.")
+
+    if "pole-piece gap" in sis3_text.lower():
+        raise AssertionError("Line 244 leaked focusing work into the detector stream.")
+
+    if "cross-cutting statement" not in line_246:
+        raise AssertionError("Line 246 did not distinguish shared from stream-specific learning.")
+
+    if line_246.count("specific advancement should be confirmed") < 3:
+        raise AssertionError("Line 246 did not flag each missing stream advancement.")
+
+    blockers = " ".join(context["local_analysis"]["agent_assessment"]["blockers"])
+    for expected_blocker in (
+        "technological_advancement",
+        "experimental_results",
+        "supporting_evidence",
+    ):
+        if expected_blocker not in blockers:
+            raise AssertionError(
+                f"Incomplete intake did not flag blocker: {expected_blocker}"
+            )
+
+    print("\nIncomplete intake capability checks")
+    print("=" * 80)
+    print(
+        f"PASS: detected {evaluation['detected']}/{evaluation['total']} "
+        "deliberately omitted evidence categories"
+    )
+    print("PASS: selected and preserved TU1/TU2/TU3 structure")
+    print("PASS: generated grounded stream-specific follow-up questions")
+    print("PASS: kept unsupported tests and measurements out of T661 drafts")
+    print("PASS: flagged shared learning and missing stream-specific advancements")
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -847,3 +913,4 @@ validate_technical_report_layer(model)
 validate_t661_questionnaire_drafting(model)
 validate_report_strategy_layer(model)
 validate_llm_report_agent_layer()
+validate_incomplete_intake_capability(model)

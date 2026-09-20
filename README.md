@@ -164,6 +164,23 @@ The AI output is constrained to structured fields, checked against the official 
 word limits, scanned for measurements that do not appear in the supplied source, and
 clearly marked as a draft requiring human verification.
 
+## Test An Incomplete Client Intake
+
+The repository includes a fictional SEM project draft with ten evidence categories
+left incomplete on purpose. Run the local evaluator to see which omissions the agent
+detects and which specific follow-up questions it asks:
+
+```bash
+venv/bin/python src/capability_eval.py \
+  examples/incomplete_sem_client_draft.md \
+  examples/incomplete_sem_expected_gaps.json
+```
+
+The expected-gaps JSON is used only to score the result after analysis; it is not
+included in the project information supplied to the analyzer. This is an offline
+test of the local classifier, report strategy, evidence checks, and deterministic
+T661 drafting. It does not make an OpenAI API request.
+
 ## Add CRA-Grounded Training Examples
 
 ```bash

@@ -1,0 +1,55 @@
+{
+  "description": "Deliberate omissions in the incomplete SEM client draft. The analyzer does not receive this file.",
+  "expected_gaps": [
+    {
+      "id": "baseline_targets",
+      "description": "Quantified baseline, technical targets, and acceptance criteria are missing.",
+      "match_terms": ["target", "baseline", "required", "metric", "threshold"]
+    },
+    {
+      "id": "test_matrix",
+      "description": "The pole-piece, aperture, voltage, lens-current, and working-distance test matrix is missing.",
+      "match_terms": ["test matrix", "pole-piece", "lens current", "working distance", "aperture"]
+    },
+    {
+      "id": "measured_results",
+      "description": "Measured resolution, drift, stabilization, and detector SNR results are missing.",
+      "match_terms": ["measured", "resolution", "drift", "stabilization", "snr"]
+    },
+    {
+      "id": "failed_alternatives",
+      "description": "Failed and abandoned alternatives are not tied to observations and decisions.",
+      "match_terms": ["failed", "alternative", "abandoned", "insufficient", "did not"]
+    },
+    {
+      "id": "thermal_history",
+      "description": "Temperature logs, magnetic or lens-current history, and compensation-model details are missing.",
+      "match_terms": ["temperature logs", "current history", "magnetic history", "hysteresis", "compensation"]
+    },
+    {
+      "id": "detector_conditions",
+      "description": "Detector geometry, position, bias, shielding, sample type, and SNR comparisons are missing.",
+      "match_terms": ["detector geometry", "detector position", "bias", "shielding", "sample type", "snr"]
+    },
+    {
+      "id": "advancement",
+      "description": "The new technological knowledge gained for each uncertainty is not stated.",
+      "match_terms": ["knowledge", "learned", "advancement", "determined", "established"]
+    },
+    {
+      "id": "fiscal_year_timeline",
+      "description": "Experiments and results are not placed chronologically within the fiscal year.",
+      "match_terms": ["when", "date", "timeline", "sequence", "fiscal year"]
+    },
+    {
+      "id": "supporting_records",
+      "description": "No supporting design files, test logs, simulation records, images, or engineering notes are identified.",
+      "match_terms": ["records", "test logs", "design files", "simulation", "images", "notes"]
+    },
+    {
+      "id": "year_end_uncertainty",
+      "description": "The unresolved technological uncertainty at year-end is vague.",
+      "match_terms": ["remained", "unresolved", "year-end", "still failed", "operating conditions"]
+    }
+  ]
+}
