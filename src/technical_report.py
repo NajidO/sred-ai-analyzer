@@ -6,6 +6,7 @@ from pathlib import Path
 from analysis_engine import BASE_DIR
 from case_store import load_case
 from report_strategy import build_report_strategy
+from t661_evidence_assessment import build_t661_evidence_assessment
 
 
 TECHNICAL_REPORTS_DIR = "technical_reports"
@@ -64,15 +65,26 @@ def build_technical_report(case_data):
         final_assessment,
         source_sections,
     )
+    evidence_assessment = build_t661_evidence_assessment(
+        case_data.get("updated_text", ""),
+        source_sections,
+        report_strategy,
+    )
+    readiness = apply_t661_evidence_gate(readiness, evidence_assessment)
     t661_project_description = build_t661_project_description(
         case_data,
         final_assessment,
         source_sections,
         report_strategy,
+        evidence_assessment,
     )
 
     return {
-        "title": "SR&ED T661 Technical Report Draft",
+        "title": (
+            "SR&ED T661 Technical Report Draft"
+            if evidence_assessment["can_draft"]
+            else "SR&ED T661 Evidence Assessment"
+        ),
         "case_id": case_data.get("case_id", ""),
         "created_at": case_data.get("created_at", ""),
         "status": case_data.get("status", ""),
@@ -80,9 +92,15 @@ def build_technical_report(case_data):
         "readiness": readiness,
         "metadata": build_metadata(case_data, final_assessment, agent_assessment),
         "report_strategy": report_strategy,
+        "t661_evidence_assessment": evidence_assessment,
         "t661_project_description": t661_project_description,
         "sections": [
-            build_executive_summary(final_assessment, agent_assessment, readiness),
+            build_executive_summary(
+                final_assessment,
+                agent_assessment,
+                readiness,
+                evidence_assessment["can_draft"],
+            ),
             build_project_overview(case_data, source_sections),
             build_technical_objective_section(cra_checks, final_assessment),
             build_uncertainty_section(cra_checks, evidence_map),
@@ -101,6 +119,7 @@ def build_t661_project_description(
     final_assessment,
     source_sections=None,
     report_strategy=None,
+    evidence_assessment=None,
 ):
     source_sections = source_sections or extract_questionnaire_sections(
         case_data.get("updated_text", "")
@@ -110,6 +129,14 @@ def build_t661_project_description(
         final_assessment,
         source_sections,
     )
+    evidence_assessment = evidence_assessment or build_t661_evidence_assessment(
+        case_data.get("updated_text", ""),
+        source_sections,
+        report_strategy,
+    )
+
+    if not evidence_assessment["can_draft"]:
+        return {}
 
     if should_section_t661_lines(report_strategy):
         line_242 = build_sectioned_t661_line_242(source_sections, report_strategy)
@@ -735,7 +762,12 @@ def build_metadata(case_data, final_assessment, agent_assessment):
     }
 
 
-def build_executive_summary(final_assessment, agent_assessment, readiness):
+def build_executive_summary(
+    final_assessment,
+    agent_assessment,
+    readiness,
+    can_draft=True,
+):
     prediction = final_assessment.get("prediction", "")
     alignment = final_assessment.get("cra_alignment", "")
     decision = agent_assessment.get("decision", "")
@@ -753,6 +785,9 @@ def build_executive_summary(final_assessment, agent_assessment, readiness):
         (
             "This draft is for analyst review. It should be treated as a structured "
             "starting point, not as a final eligibility opinion."
+            if can_draft
+            else "This is an evidence assessment for analyst review, not a technical "
+            "report draft or final eligibility opinion."
         ),
     ]
 
@@ -772,7 +807,7 @@ def build_project_overview(case_data, source_sections=None):
 
     if source_sections:
         body.append(
-            "Questionnaire-style input was detected and used to draft the T661 lines."
+            "Questionnaire-style input was detected and used to assess each T661 line."
         )
         bullets = [
             f"Question {number}: {section['title']}"
@@ -1032,6 +1067,24 @@ def assess_report_readiness(final_assessment):
     }
 
 
+def apply_t661_evidence_gate(readiness, evidence_assessment):
+    if evidence_assessment["can_draft"]:
+        return readiness
+
+    gated = dict(readiness)
+    gated["level"] = "intake_required"
+    gated["reasons"] = [
+        "T661 drafting is withheld until the line-specific evidence gaps are resolved."
+    ]
+    evidence_gaps = [
+        f"Line {line_number}: {missing_item}"
+        for line_number, section in evidence_assessment["sections"].items()
+        for missing_item in section["missing_information"]
+    ]
+    gated["gaps"] = unique_items(readiness.get("gaps", []) + evidence_gaps)
+    return gated
+
+
 def render_technical_report(report):
     lines = [
         f"# {report['title']}",
@@ -1060,35 +1113,47 @@ def render_technical_report(report):
     ])
 
     append_strategy_lines(lines, report["report_strategy"])
+    append_t661_evidence_assessment(lines, report["t661_evidence_assessment"])
 
-    lines.extend([
-        "## T661 Project Description Draft",
-        "",
-        (
-            "These drafts are structured for Form T661 Part 2, Section B. "
-            "Review the wording, confirm technical accuracy, and enter the final "
-            "version into approved tax software or the form workflow."
-        ),
-        "",
-    ])
+    if report["t661_evidence_assessment"]["can_draft"]:
+        lines.extend([
+            "## T661 Project Description Draft",
+            "",
+            (
+                "These drafts are structured for Form T661 Part 2, Section B. "
+                "Review the wording, confirm technical accuracy, and enter the final "
+                "version into approved tax software or the form workflow."
+            ),
+            "",
+        ])
 
-    for line_number in ["242", "244", "246"]:
-        line = report["t661_project_description"][line_number]
-        lines.append(
-            f"### Line {line_number} - {line['title']} "
-            f"(Maximum {line['word_limit']} words)"
-        )
-        lines.append("")
-        lines.append(f"Word count: {line['word_count']} / {line['word_limit']}")
-        lines.append("")
-        lines.append(line["draft"])
-        lines.append("")
-
-        if line["warnings"]:
-            lines.append("Warnings:")
-            for warning in line["warnings"]:
-                lines.append(f"- {warning}")
+        for line_number in ["242", "244", "246"]:
+            line = report["t661_project_description"][line_number]
+            lines.append(
+                f"### Line {line_number} - {line['title']} "
+                f"(Maximum {line['word_limit']} words)"
+            )
             lines.append("")
+            lines.append(f"Word count: {line['word_count']} / {line['word_limit']}")
+            lines.append("")
+            lines.append(line["draft"])
+            lines.append("")
+
+            if line["warnings"]:
+                lines.append("Warnings:")
+                for warning in line["warnings"]:
+                    lines.append(f"- {warning}")
+                lines.append("")
+    else:
+        lines.extend([
+            "## T661 Drafting Decision",
+            "",
+            "**Draft not generated.** The available information is not sufficient for a "
+            "grounded response to every required T661 project-description line.",
+            "",
+            "Complete the evidence questions above, then run the analyzer again.",
+            "",
+        ])
 
     lines.extend([
         "## Supporting Analyst Notes",
@@ -1118,6 +1183,60 @@ def render_technical_report(report):
             lines.append("")
 
     return "\n".join(lines).rstrip() + "\n"
+
+
+def append_t661_evidence_assessment(lines, assessment):
+    lines.extend([
+        "## T661 Evidence Assessment",
+        "",
+        f"Decision: `{assessment['decision']}`",
+        "",
+        assessment["summary"],
+        "",
+    ])
+
+    for line_number in ("242", "244", "246"):
+        section = assessment["sections"][line_number]
+        lines.extend([
+            f"### Line {line_number}: {section['title']}",
+            "",
+            f"Status: `{section['status']}`",
+            "",
+            "#### Information supported by the source",
+            "",
+        ])
+
+        if section["supported_information"]:
+            lines.extend(f"- {item}" for item in section["supported_information"])
+        else:
+            lines.append("- No sufficiently specific information identified.")
+
+        lines.extend(["", "#### Missing information", ""])
+        if section["missing_information"]:
+            lines.extend(f"- {item}" for item in section["missing_information"])
+        else:
+            lines.append("- No blocking omissions detected by the local evidence checks.")
+
+        for stream in section["stream_assessments"]:
+            lines.extend([
+                "",
+                f"#### {stream['stream_id']}/{stream['sis_id']}: {stream['title']}",
+                "",
+                "Supported facts for this stream:",
+            ])
+            if stream["supported_information"]:
+                lines.extend(
+                    f"- {item}"
+                    for item in stream["supported_information"]
+                )
+            else:
+                lines.append("- No stream-specific source statement identified.")
+
+            if stream["questions"]:
+                lines.extend(["", "Questions to resolve:"])
+                lines.extend(f"- {question}" for question in stream["questions"])
+
+        lines.append("")
 
 
 def append_strategy_lines(lines, strategy):

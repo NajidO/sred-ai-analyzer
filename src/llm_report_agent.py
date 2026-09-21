@@ -10,6 +10,7 @@ from pathlib import Path
 from analysis_engine import BASE_DIR, analyze_text, load_classifier
 from case_store import make_json_safe, summarize_analysis
 from report_strategy import build_report_strategy
+from t661_evidence_assessment import build_t661_evidence_assessment
 from technical_report import (
     T661_LINE_TITLES,
     build_t661_line,
@@ -33,6 +34,7 @@ STRUCTURE_MODES = {
     "hybrid",
 }
 CONFIDENCE_LEVELS = {"low", "medium", "high"}
+DRAFTING_DECISIONS = {"draft_ready", "needs_more_information"}
 MEASUREMENT_PATTERN = re.compile(
     r"\b\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*"
     r"(?:nm/min(?:ute)?|nm(?:/minute)?|kv|mv|ma|amps?|v|%|minutes?|hours?|"
@@ -58,6 +60,41 @@ REPORT_SCHEMA = {
             "enum": sorted(STRUCTURE_MODES),
         },
         "structure_rationale": {"type": "string"},
+        "drafting_decision": {
+            "type": "string",
+            "enum": sorted(DRAFTING_DECISIONS),
+        },
+        "section_assessments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "line_number": {
+                        "type": "string",
+                        "enum": ["242", "244", "246"],
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["ready", "needs_more_information"],
+                    },
+                    "supported_information": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "missing_information": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": [
+                    "line_number",
+                    "status",
+                    "supported_information",
+                    "missing_information",
+                ],
+                "additionalProperties": False,
+            },
+        },
         "technical_streams": {
             "type": "array",
             "items": {
@@ -129,6 +166,8 @@ REPORT_SCHEMA = {
         "confidence",
         "structure_mode",
         "structure_rationale",
+        "drafting_decision",
+        "section_assessments",
         "technical_streams",
         "line_242",
         "line_244",
@@ -157,13 +196,21 @@ Decide whether the report is clearest as one integrated narrative, separate TU/S
 streams, or a hybrid. When streams are useful, label them TU1, TU2, and so on, and link
 the corresponding systematic investigations and advancements. Explain the rationale.
 
-Draft CRA Form T661 project-description responses for Lines 242, 244, and 246. Keep
-Line 242 below 330 words, Line 244 below 660 words, and Line 246 below 330 words so the
-application can safely enforce the official limits. Line 242 must describe the
-technological uncertainties and limits of standard practice. Line 244 must describe
-the systematic work, hypotheses or approaches, tests, observations, failures, and
-iterations. Line 246 must describe technological knowledge gained or attempted, not
-business benefits. Do not state that a project is legally eligible.
+Before drafting, assess Lines 242, 244, and 246 separately. For each line, list what
+the source actually supports and what is missing. If any line lacks the information
+needed for a grounded response, set drafting_decision to needs_more_information and
+leave line_242, line_244, and line_246 as empty strings. Do not create a partial or
+placeholder report. Instead, ask specific questions that would close the identified
+TU/SIS evidence gaps.
+
+Only when every line is sufficiently supported, set drafting_decision to draft_ready
+and draft all three CRA Form T661 project-description responses. Keep Line 242 below
+330 words, Line 244 below 660 words, and Line 246 below 330 words. Line 242 must
+describe technological uncertainties and limits of standard practice. Line 244 must
+describe the systematic work, hypotheses, alternatives, tests, observations,
+failures, iterations, abandoned paths, and pivots. Line 246 must describe technological
+knowledge gained or attempted, not business benefits. Do not state that a project is
+legally eligible.
 
 Ask specific follow-up questions grounded in the supplied facts. Each question should
 point the analyst toward plausible records, failed alternatives, measurements, or
@@ -187,17 +234,24 @@ def build_local_context(source_text, classifier=None):
         final_assessment,
         source_sections,
     )
+    evidence_assessment = build_t661_evidence_assessment(
+        source_text,
+        source_sections,
+        strategy,
+    )
     deterministic_t661 = build_t661_project_description(
         case_data,
         final_assessment,
         source_sections,
         strategy,
+        evidence_assessment,
     )
 
     return make_json_safe({
         "project_source": source_text,
         "local_analysis": final_assessment,
         "local_strategy": strategy,
+        "t661_evidence_assessment": evidence_assessment,
         "local_t661_baseline": deterministic_t661,
     })
 
@@ -253,7 +307,12 @@ def request_llm_report(context, model=DEFAULT_MODEL, api_key=None):
         raise RuntimeError("The model returned invalid JSON.") from exc
 
     usage = extract_usage(response)
-    return normalize_report_payload(payload, context["project_source"]), usage
+    return normalize_report_payload(
+        payload,
+        context["project_source"],
+        drafting_allowed=context["t661_evidence_assessment"]["can_draft"],
+        local_evidence_assessment=context["t661_evidence_assessment"],
+    ), usage
 
 
 def resolve_api_key(api_key=None):
@@ -286,16 +345,39 @@ def extract_usage(response):
     }
 
 
-def normalize_report_payload(payload, source_text):
+def normalize_report_payload(
+    payload,
+    source_text,
+    drafting_allowed=True,
+    local_evidence_assessment=None,
+):
     validate_report_payload(payload)
     normalized = dict(payload)
-    normalized["t661_lines"] = {
-        line_number: build_t661_line(
-            line_number,
-            payload[f"line_{line_number}"],
-        )
-        for line_number in ("242", "244", "246")
-    }
+    if not drafting_allowed:
+        normalized["drafting_decision"] = "needs_more_information"
+        normalized["t661_lines"] = {}
+        for line_number in ("242", "244", "246"):
+            normalized[f"line_{line_number}"] = ""
+        if local_evidence_assessment:
+            normalized["section_assessments"] = [
+                {
+                    "line_number": line_number,
+                    "status": section["status"],
+                    "supported_information": section["supported_information"],
+                    "missing_information": section["missing_information"],
+                }
+                for line_number, section in local_evidence_assessment["sections"].items()
+            ]
+    elif payload["drafting_decision"] == "draft_ready":
+        normalized["t661_lines"] = {
+            line_number: build_t661_line(
+                line_number,
+                payload[f"line_{line_number}"],
+            )
+            for line_number in ("242", "244", "246")
+        }
+    else:
+        normalized["t661_lines"] = {}
 
     generated_text = "\n".join(
         payload[f"line_{line_number}"]
@@ -329,8 +411,12 @@ def validate_report_payload(payload):
     if payload["confidence"] not in CONFIDENCE_LEVELS:
         raise ValueError("The model report has an invalid confidence level.")
 
+    if payload["drafting_decision"] not in DRAFTING_DECISIONS:
+        raise ValueError("The model report has an invalid drafting decision.")
+
     list_fields = [
         "technical_streams",
+        "section_assessments",
         "follow_up_questions",
         "factual_risks",
         "review_notes",
@@ -339,9 +425,25 @@ def validate_report_payload(payload):
         if not isinstance(payload[field], list):
             raise ValueError(f"The model report field '{field}' must be a list.")
 
-    for line_number in ("242", "244", "246"):
-        if not str(payload[f"line_{line_number}"]).strip():
-            raise ValueError(f"The model report has an empty Line {line_number}.")
+    line_values = [
+        str(payload[f"line_{line_number}"]).strip()
+        for line_number in ("242", "244", "246")
+    ]
+    if payload["drafting_decision"] == "draft_ready" and not all(line_values):
+        raise ValueError("A draft-ready model report must populate all T661 lines.")
+
+    if payload["drafting_decision"] == "needs_more_information" and any(line_values):
+        raise ValueError(
+            "A needs-more-information model report must not contain partial T661 drafts."
+        )
+
+    assessed_lines = {
+        section.get("line_number")
+        for section in payload["section_assessments"]
+        if isinstance(section, dict)
+    }
+    if len(payload["section_assessments"]) != 3 or assessed_lines != {"242", "244", "246"}:
+        raise ValueError("The model report must assess Lines 242, 244, and 246 once each.")
 
 
 def find_new_measurements(source_text, generated_text):
@@ -370,6 +472,11 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
     generated_at = generated_at or datetime.now().astimezone()
     local_analysis = context["local_analysis"]
     local_strategy = context["local_strategy"]
+    output_status = (
+        "Draft for human verification, not an eligibility opinion"
+        if report["drafting_decision"] == "draft_ready"
+        else "Evidence assessment only; T661 drafting withheld"
+    )
     lines = [
         "# AI-Assisted SR&ED Capability Test",
         "",
@@ -378,7 +485,7 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
         f"- Local classifier: `{local_analysis['prediction']}`",
         f"- AI eligibility signal: `{report['eligibility_signal']}`",
         f"- AI confidence: `{report['confidence']}`",
-        "- Status: Draft for human verification, not an eligibility opinion",
+        f"- Status: {output_status}",
     ]
 
     if usage:
@@ -403,23 +510,50 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
         f"**Local planner selection:** `{local_strategy['selected_structure']['mode']}`",
     ])
     lines.extend(render_bullets(local_strategy["rationale"]))
-    lines.extend(["", "## T661 Project Description Draft"])
+    lines.extend([
+        "",
+        "## T661 Evidence Assessment",
+        "",
+        f"**Drafting decision:** `{report['drafting_decision']}`",
+    ])
 
-    for line_number in ("242", "244", "246"):
-        line = report["t661_lines"][line_number]
+    for section in report["section_assessments"]:
         lines.extend([
             "",
-            f"### Line {line_number}",
+            f"### Line {section['line_number']}",
             "",
-            T661_LINE_TITLES[line_number],
+            f"**Status:** `{section['status']}`",
             "",
-            f"**Word count:** {line['word_count']} / {line['word_limit']}",
-            "",
-            line["draft"],
+            "**Information supported by the source:**",
         ])
-        if line["warnings"]:
-            lines.extend(["", "**Warnings:**"])
-            lines.extend(f"- {warning}" for warning in line["warnings"])
+        lines.extend(render_bullets(section["supported_information"]))
+        lines.extend(["", "**Missing information:**"])
+        lines.extend(render_bullets(section["missing_information"]))
+
+    if report["drafting_decision"] == "draft_ready":
+        lines.extend(["", "## T661 Project Description Draft"])
+        for line_number in ("242", "244", "246"):
+            line = report["t661_lines"][line_number]
+            lines.extend([
+                "",
+                f"### Line {line_number}",
+                "",
+                T661_LINE_TITLES[line_number],
+                "",
+                f"**Word count:** {line['word_count']} / {line['word_limit']}",
+                "",
+                line["draft"],
+            ])
+            if line["warnings"]:
+                lines.extend(["", "**Warnings:**"])
+                lines.extend(f"- {warning}" for warning in line["warnings"])
+    else:
+        lines.extend([
+            "",
+            "## T661 Drafting Decision",
+            "",
+            "**Draft not generated.** Resolve the missing information above before drafting.",
+        ])
 
     lines.extend(["", "## Technical Streams"])
     for stream in report["technical_streams"]:

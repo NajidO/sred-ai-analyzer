@@ -38,6 +38,7 @@ from technical_report import (
     build_t661_project_description,
     extract_questionnaire_sections,
     generate_technical_report_for_case,
+    render_technical_report,
     word_count,
 )
 
@@ -429,12 +430,11 @@ def validate_technical_report_layer(model):
             raise AssertionError(f"Technical report is missing section: {section}")
 
     required_fragments = [
-        "# SR&ED T661 Technical Report Draft",
+        "# SR&ED T661 Evidence Assessment",
         f"Case ID: {case_path.stem}",
-        "T661 Project Description Draft",
-        "Line 242 - What scientific or technological uncertainties did you attempt to overcome?",
-        "Line 244 - What work did you perform in the tax year",
-        "Line 246 - What scientific or technological advancements",
+        "T661 Evidence Assessment",
+        "T661 Drafting Decision",
+        "Draft not generated",
         "Report readiness",
         "Standard database indexing did not resolve write latency",
         "Supporting Evidence Inventory",
@@ -454,11 +454,21 @@ def validate_technical_report_layer(model):
     }:
         raise AssertionError("Technical report readiness level is invalid.")
 
+    if report["t661_evidence_assessment"]["can_draft"]:
+        raise AssertionError("Incomplete sample case was incorrectly marked draft-ready.")
+
+    if report["t661_project_description"]:
+        raise AssertionError("Incomplete sample case produced a partial T661 draft.")
+
+    if report["readiness"]["level"] != "intake_required":
+        raise AssertionError("Evidence gate did not set incomplete case to intake_required.")
+
     print("\nTechnical report generator checks")
     print("=" * 80)
-    print("PASS: built structured technical report draft")
+    print("PASS: built structured T661 evidence assessment")
     print("PASS: saved Markdown technical report")
     print("PASS: calculated report readiness")
+    print("PASS: withheld T661 drafting when required evidence was missing")
 
 
 def validate_t661_questionnaire_drafting(model):
@@ -544,6 +554,7 @@ Drift compensation for low-contrast samples and performance across the complete 
         case_path = save_intake_case_file(session, base_dir)
         case_data = load_case(case_path.stem, base_dir)
         source_sections = extract_questionnaire_sections(questionnaire_text)
+        technical_report = build_technical_report(case_data)
         t661_sections = build_t661_project_description(
             case_data,
             case_data["final_assessment"],
@@ -554,6 +565,9 @@ Drift compensation for low-contrast samples and performance across the complete 
 
     if len(source_sections) < 16:
         raise AssertionError("Questionnaire parser did not capture the numbered sections.")
+
+    if not technical_report["t661_evidence_assessment"]["can_draft"]:
+        raise AssertionError("Complete questionnaire was incorrectly blocked from drafting.")
 
     for line_number, line in t661_sections.items():
         if not line["draft"]:
@@ -584,6 +598,7 @@ Drift compensation for low-contrast samples and performance across the complete 
     print("=" * 80)
     print("PASS: parsed numbered questionnaire sections")
     print("PASS: drafted T661 lines 242, 244, and 246")
+    print("PASS: allowed drafting only after all three lines passed evidence checks")
     print("PASS: kept T661 drafts within CRA word limits")
     print("PASS: sectioned T661 drafts with TU/SIS labels when useful")
 
@@ -684,6 +699,27 @@ def validate_llm_report_agent_layer():
         "confidence": "medium",
         "structure_mode": "integrated_narrative",
         "structure_rationale": "One uncertainty stream is clearest for this short record.",
+        "drafting_decision": "draft_ready",
+        "section_assessments": [
+            {
+                "line_number": "242",
+                "status": "ready",
+                "supported_information": ["A 10 nm target and standard-practice limit are stated."],
+                "missing_information": [],
+            },
+            {
+                "line_number": "244",
+                "status": "ready",
+                "supported_information": ["Revised lens geometry was tested."],
+                "missing_information": [],
+            },
+            {
+                "line_number": "246",
+                "status": "ready",
+                "supported_information": ["The intended technical learning is stated."],
+                "missing_information": [],
+            },
+        ],
         "technical_streams": [
             {
                 "id": "TU1",
@@ -749,6 +785,62 @@ def validate_llm_report_agent_layer():
         if fragment not in report_text:
             raise AssertionError(f"Rendered AI report is missing: {fragment}")
 
+    incomplete_payload = dict(payload)
+    incomplete_payload.update({
+        "drafting_decision": "needs_more_information",
+        "line_242": "",
+        "line_244": "",
+        "line_246": "",
+        "section_assessments": [
+            {
+                "line_number": "242",
+                "status": "needs_more_information",
+                "supported_information": ["A lens geometry target is mentioned."],
+                "missing_information": ["Clarify the exact technological uncertainty."],
+            },
+            {
+                "line_number": "244",
+                "status": "needs_more_information",
+                "supported_information": ["A revised geometry was tested."],
+                "missing_information": ["Provide alternatives, measurements, and decisions."],
+            },
+            {
+                "line_number": "246",
+                "status": "needs_more_information",
+                "supported_information": [],
+                "missing_information": ["State the technological knowledge gained."],
+            },
+        ],
+    })
+    incomplete_report = normalize_report_payload(incomplete_payload, source_text)
+    if incomplete_report["t661_lines"]:
+        raise AssertionError("Incomplete AI assessment produced partial T661 lines.")
+
+    incomplete_text = render_llm_report(incomplete_report, context, "test-model")
+    if "Draft not generated" not in incomplete_text:
+        raise AssertionError("Incomplete AI report did not show the drafting block.")
+
+    local_gate = {
+        "sections": {
+            line_number: {
+                "status": "needs_more_information",
+                "supported_information": [],
+                "missing_information": [f"Missing evidence for Line {line_number}."],
+            }
+            for line_number in ("242", "244", "246")
+        }
+    }
+    locally_blocked = normalize_report_payload(
+        payload,
+        source_text,
+        drafting_allowed=False,
+        local_evidence_assessment=local_gate,
+    )
+    if locally_blocked["drafting_decision"] != "needs_more_information":
+        raise AssertionError("Local evidence gate did not override AI drafting.")
+    if locally_blocked["t661_lines"]:
+        raise AssertionError("Local evidence gate allowed AI-generated T661 prose.")
+
     print("\nLLM report agent checks")
     print("=" * 80)
     print("PASS: built grounded model input")
@@ -756,6 +848,8 @@ def validate_llm_report_agent_layer():
     print("PASS: enforced T661 word limits locally")
     print("PASS: flagged unsupported measurements")
     print("PASS: rendered analyst-review Markdown")
+    print("PASS: withheld AI-generated T661 prose when evidence was incomplete")
+    print("PASS: enforced the local evidence gate over an AI drafting attempt")
 
 
 def validate_incomplete_intake_capability(model):
@@ -766,6 +860,7 @@ def validate_incomplete_intake_capability(model):
     context = build_local_context(source_text, classifier=model)
     evaluation = evaluate_expected_gaps(context, expected_gaps)
     strategy = context["local_strategy"]
+    evidence_assessment = context["t661_evidence_assessment"]
     t661 = context["local_t661_baseline"]
 
     if evaluation["detected"] != evaluation["total"]:
@@ -783,21 +878,59 @@ def validate_incomplete_intake_capability(model):
     if not {"TU1", "TU2", "TU3"}.issubset(detected_streams):
         raise AssertionError("Incomplete intake did not detect all three SEM streams.")
 
-    line_244 = t661["244"]["draft"]
-    line_246 = t661["246"]["draft"]
-    sis3_text = line_244.split("SIS3 for TU3", maxsplit=1)[-1]
+    if evidence_assessment["decision"] != "needs_more_information":
+        raise AssertionError("Incomplete intake was incorrectly marked draft-ready.")
 
-    if "segmented annular detector" in line_244.lower():
-        raise AssertionError("Line 244 invented an unsupported detector configuration.")
+    if evidence_assessment["can_draft"]:
+        raise AssertionError("Incomplete intake incorrectly allowed T661 drafting.")
 
-    if "pole-piece gap" in sis3_text.lower():
-        raise AssertionError("Line 244 leaked focusing work into the detector stream.")
+    if t661:
+        raise AssertionError("Incomplete intake produced a partial T661 report.")
 
-    if "cross-cutting statement" not in line_246:
-        raise AssertionError("Line 246 did not distinguish shared from stream-specific learning.")
+    if set(evidence_assessment["blocked_lines"]) != {"242", "244", "246"}:
+        raise AssertionError("Incomplete intake did not block all incomplete T661 lines.")
 
-    if line_246.count("specific advancement should be confirmed") < 3:
-        raise AssertionError("Line 246 did not flag each missing stream advancement.")
+    line_244_questions = " ".join(
+        question
+        for stream in evidence_assessment["sections"]["244"]["stream_assessments"]
+        for question in stream["questions"]
+    ).lower()
+    for required_question_detail in (
+        "considered but not tested",
+        "refined, abandoned, or replaced by a pivot",
+        "what further",
+        "what was actually measured",
+    ):
+        if required_question_detail not in line_244_questions:
+            raise AssertionError(
+                "Line 244 questions omitted required detail: "
+                f"{required_question_detail}"
+            )
+
+    case_data = {
+        "case_id": "incomplete_sem_test",
+        "created_at": "",
+        "status": "intake",
+        "updated_text": source_text,
+        "final_assessment": context["local_analysis"],
+    }
+    report_text = render_technical_report(build_technical_report(case_data))
+    if "## T661 Project Description Draft" in report_text:
+        raise AssertionError("Rendered incomplete assessment included a T661 draft.")
+    if "**Draft not generated.**" not in report_text:
+        raise AssertionError("Rendered incomplete assessment omitted the drafting decision.")
+
+    unstructured_text = "\n".join(
+        line
+        for line in source_text.splitlines()
+        if not line.startswith("#")
+    )
+    unstructured_context = build_local_context(unstructured_text, classifier=model)
+    unstructured_assessment = unstructured_context["t661_evidence_assessment"]
+    if unstructured_assessment["can_draft"]:
+        raise AssertionError("Incomplete unstructured intake was incorrectly draft-ready.")
+    if not unstructured_assessment["sections"]["244"]["supported_information"]:
+        raise AssertionError("Unstructured intake work facts were not assessed.")
 
     blockers = " ".join(context["local_analysis"]["agent_assessment"]["blockers"])
     for expected_blocker in (
@@ -818,8 +951,9 @@ def validate_incomplete_intake_capability(model):
     )
     print("PASS: selected and preserved TU1/TU2/TU3 structure")
     print("PASS: generated grounded stream-specific follow-up questions")
-    print("PASS: kept unsupported tests and measurements out of T661 drafts")
-    print("PASS: flagged shared learning and missing stream-specific advancements")
+    print("PASS: blocked Lines 242, 244, and 246 when evidence was incomplete")
+    print("PASS: generated no partial T661 report")
+    print("PASS: assessed incomplete unstructured client narratives")
 
 
 training_df = validate_training_csv()

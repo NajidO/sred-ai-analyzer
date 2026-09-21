@@ -111,13 +111,21 @@ python src/case_manager.py report case_YYYYMMDD_HHMMSS
 python src/technical_report.py case_YYYYMMDD_HHMMSS --show
 ```
 
-The technical report generator turns a saved case file into a Markdown SR&ED technical report draft under `technical_reports/`. The main output is structured around Form T661 Part 2, Section B:
+The technical report generator first assesses whether a saved case contains enough
+grounded information for Form T661 Part 2, Section B. For each line it lists supported
+source facts, missing information, and TU/SIS-specific client questions. It only
+creates report prose when all three lines are sufficiently supported:
 
 - line 242: scientific or technological uncertainties, maximum 350 words
 - line 244: work performed in the tax year, maximum 700 words
 - line 246: scientific or technological advancements, maximum 350 words
 
-The generator also includes word counts, gap warnings, report readiness, and supporting analyst notes. Questionnaire-style inputs are parsed into the T661 lines before the broader reviewer notes are shown.
+When evidence is incomplete, the generator writes a T661 evidence assessment and
+explicitly withholds the report draft. It asks about the exact unknown, known methods,
+alternatives considered and tested, controlled conditions, measurements, failures,
+abandoned paths, pivots, further experiments, technical learning, and unresolved
+year-end uncertainty. Complete cases receive word-count checks, gap warnings, report
+readiness, and supporting analyst notes.
 
 Before drafting the T661 lines, the agent adds a drafting strategy and rationale. It decides whether the source facts are better handled as one integrated narrative or split into TU/SIS streams, identifies candidate technical uncertainty streams, and asks more specific follow-up questions tied to detected project facts.
 
@@ -173,13 +181,15 @@ detects and which specific follow-up questions it asks:
 ```bash
 venv/bin/python src/capability_eval.py \
   examples/incomplete_sem_client_draft.md \
-  examples/incomplete_sem_expected_gaps.json
+  examples/incomplete_sem_expected_gaps.json \
+  --output reports/incomplete_sem_evidence_assessment.txt
 ```
 
 The expected-gaps JSON is used only to score the result after analysis; it is not
 included in the project information supplied to the analyzer. This is an offline
-test of the local classifier, report strategy, evidence checks, and deterministic
-T661 drafting. It does not make an OpenAI API request.
+test of the local classifier, report strategy, and evidence checks. This fixture must
+produce `needs_more_information` and no T661 draft. It does not make an OpenAI API
+request.
 
 ## Add CRA-Grounded Training Examples
 
@@ -205,6 +215,10 @@ Case manager checks: PASS
 Technical report generator checks: PASS
 T661 project description checks: PASS
 Report strategy planner checks: PASS
+Incomplete intake gaps detected: 10/10
+Incomplete intake T661 drafts generated: 0
+Complete questionnaire T661 drafting: PASS
+Unstructured intake assessment: PASS
 ```
 
 This accuracy is only for the current controlled test set. More diverse examples are still needed before treating the model as reliable.
