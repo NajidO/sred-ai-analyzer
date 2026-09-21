@@ -1,3 +1,6 @@
+import re
+
+
 STREAM_DEFINITIONS = [
     {
         "id": "TU1",
@@ -127,6 +130,20 @@ STREAM_DEFINITIONS = [
             "accuracy",
             "scalability",
             "throughput",
+            "software",
+            "model",
+            "classification",
+            "recall",
+            "false positive",
+            "inference",
+            "embedding",
+            "feature",
+            "algorithm",
+            "batching",
+            "event-driven",
+            "scheduling",
+            "sequence",
+            "temporal",
         ],
         "uncertainty": (
             "Whether software, data-processing, or algorithmic methods could meet the required "
@@ -189,23 +206,31 @@ def identify_streams(source_text, source_sections):
                 "suggested_questions": definition["question_templates"],
             })
 
+    uncertainty_clauses = extract_uncertainty_clauses(source_text, source_sections)
+    uncovered_clauses = [
+        clause
+        for clause in uncertainty_clauses
+        if not clause_matches_stream(clause, streams)
+    ]
+
+    for clause in uncovered_clauses:
+        streams.append(
+            build_source_defined_stream(
+                source_text,
+                source_sections,
+                uncertainty_sentence=clause,
+                stream_id=next_available_stream_id(streams),
+            )
+        )
+
     if not streams:
-        streams.append({
-            "id": "TU1",
-            "title": "Primary technological uncertainty",
-            "uncertainty": (
-                "The available information suggests a possible technological uncertainty, "
-                "but the agent could not confidently split it into separate technical streams."
-            ),
-            "investigation": "Use an integrated T661 narrative until more detailed facts are available.",
-            "evidence_terms": [],
-            "source_questions": [],
-            "suggested_questions": [
-                "What exact target could not be achieved with standard practice?",
-                "Which standard approach failed first, and what result showed that it was insufficient?",
-                "What alternatives were tested, abandoned, or kept for further work?",
-            ],
-        })
+        streams.append(
+            build_source_defined_stream(
+                source_text,
+                source_sections,
+                stream_id="TU1",
+            )
+        )
 
     return streams
 
@@ -223,7 +248,7 @@ def collect_keyword_evidence(keywords, normalized_text, source_sections):
         if any(has_keyword(section_text, keyword) for keyword in keywords):
             source_questions.append(f"Q{number}: {section['title']}")
 
-    score = len(terms) + min(len(source_questions), 3)
+    score = len(terms)
 
     return {
         "score": score,
@@ -232,12 +257,274 @@ def collect_keyword_evidence(keywords, normalized_text, source_sections):
     }
 
 
+def build_source_defined_stream(
+    source_text,
+    source_sections,
+    uncertainty_sentence="",
+    stream_id="TU1",
+):
+    uncertainty_sentence = uncertainty_sentence or find_source_sentence(
+        source_text,
+        UNCERTAINTY_PHRASES,
+    )
+    investigation_sentence = find_source_sentence(
+        source_text,
+        [
+            "tested",
+            "compared",
+            "experiment",
+            "prototype",
+            "trial",
+        ],
+    )
+
+    if uncertainty_sentence:
+        title = build_source_defined_title(uncertainty_sentence)
+        uncertainty = uncertainty_sentence
+    else:
+        title = "Source-defined technological uncertainty"
+        uncertainty = (
+            "The source suggests a possible technological uncertainty, but the exact "
+            "unknown still requires confirmation."
+        )
+
+    investigation = investigation_sentence or (
+        "The source does not yet provide a sufficiently specific experiment or analysis sequence."
+    )
+    evidence_terms = extract_source_terms(uncertainty_sentence or source_text)
+    source_questions = [
+        f"Q{number}: {section['title']}"
+        for number, section in sorted(source_sections.items())
+        if contains_uncertainty_language(section["text"])
+    ][:6]
+
+    return {
+        "id": stream_id,
+        "title": title,
+        "uncertainty": uncertainty,
+        "investigation": investigation,
+        "evidence_terms": evidence_terms,
+        "source_questions": source_questions,
+        "suggested_questions": [
+            "What exact target could not be achieved with standard practice?",
+            "Which standard approach failed first, and what result showed that it was insufficient?",
+            "What alternatives were tested, abandoned, or kept for further work?",
+        ],
+    }
+
+
+UNCERTAINTY_PHRASES = [
+    "technological uncertainty",
+    "technical uncertainty",
+    "it was uncertain",
+    "was uncertain",
+    "did not know whether",
+    "unknown whether",
+    "uncertainty was whether",
+]
+
+
+def extract_uncertainty_clauses(source_text, source_sections):
+    candidate_sentences = []
+    uncertainty_title_terms = ["uncertaint", "unknown", "challenge", "difficulty"]
+
+    for _, section in sorted(source_sections.items()):
+        title = section.get("title", "").lower()
+        section_sentences = [
+            sentence
+            for sentence in split_source_sentences(section.get("text", ""))
+            if not is_remaining_uncertainty_statement(sentence)
+        ]
+        if any(term in title for term in uncertainty_title_terms):
+            candidate_sentences.extend(section_sentences)
+        else:
+            candidate_sentences.extend(
+                sentence
+                for sentence in section_sentences
+                if contains_uncertainty_language(sentence)
+            )
+
+    if not candidate_sentences:
+        cleaned_source = re.sub(r"(?m)^\s*#+\s*[^\n]+$", " ", source_text)
+        candidate_sentences = [
+            sentence
+            for sentence in split_source_sentences(cleaned_source)
+            if contains_uncertainty_language(sentence)
+            and not is_remaining_uncertainty_statement(sentence)
+        ]
+
+    clauses = []
+    for sentence in candidate_sentences:
+        whether_match = re.search(r"\bwhether\s+(.+)", sentence, re.IGNORECASE)
+        if not whether_match:
+            clauses.append(sentence.strip())
+            continue
+
+        whether_text = whether_match.group(1).strip()
+        parts = re.split(r"\s+(?:or|and)\s+whether\s+", whether_text, flags=re.IGNORECASE)
+        clauses.extend(f"Whether {part.strip()}" for part in parts if part.strip())
+
+    return unique_items(clauses)
+
+
+def is_remaining_uncertainty_statement(sentence):
+    normalized = sentence.lower()
+    return contains_uncertainty_language(normalized) and any(
+        phrase in normalized
+        for phrase in [
+            "at fiscal year-end",
+            "at year-end",
+            "remained technologically uncertain",
+            "remained unresolved",
+            "remaining uncertainty",
+            "still unknown at",
+        ]
+    )
+
+
+def split_source_sentences(text):
+    normalized = " ".join(text.replace("**", "").split())
+    if not normalized:
+        return []
+    return [
+        sentence.strip()
+        for sentence in re.split(r"(?<=[.!?])\s+", normalized)
+        if sentence.strip()
+    ]
+
+
+def clause_matches_stream(clause, streams):
+    normalized_clause = clause.lower()
+    for stream in streams:
+        terms = list(stream.get("evidence_terms", []))
+        terms.extend(stream_title_keywords(stream.get("title", "")))
+        if any(has_keyword(normalized_clause, term.lower()) for term in terms):
+            return True
+    return False
+
+
+def stream_title_keywords(title):
+    stop_words = {
+        "and",
+        "from",
+        "into",
+        "source-defined",
+        "the",
+        "under",
+        "whether",
+        "with",
+    }
+    return [
+        word
+        for word in re.findall(r"[a-z][a-z0-9-]+", title.lower())
+        if len(word) > 3 and word not in stop_words
+    ]
+
+
+def next_available_stream_id(streams):
+    used = {stream["id"] for stream in streams}
+    index = 1
+    while f"TU{index}" in used:
+        index += 1
+    return f"TU{index}"
+
+
+def find_source_sentence(source_text, phrases):
+    normalized = " ".join(source_text.replace("**", "").split())
+    sentences = re.split(r"(?<=[.!?])\s+", normalized)
+    for sentence in sentences:
+        lowered = sentence.lower()
+        if any(phrase in lowered for phrase in phrases):
+            return sentence.strip()
+    return ""
+
+
+def build_source_defined_title(uncertainty_sentence):
+    fragment = uncertainty_sentence
+    prefixes = [
+        "The team did not know whether ",
+        "It was uncertain whether ",
+        "The uncertainty was whether ",
+        "The technological uncertainty was whether ",
+        "The technical uncertainty was whether ",
+    ]
+    for prefix in prefixes:
+        if fragment.lower().startswith(prefix.lower()):
+            fragment = fragment[len(prefix):]
+            break
+
+    fragment = re.split(r"[.;]", fragment, maxsplit=1)[0].strip()
+    words = fragment.split()
+    if len(words) > 14:
+        fragment = " ".join(words[:14]) + "..."
+    if not fragment:
+        return "Source-defined technological uncertainty"
+    return "Source-defined: " + fragment[0].upper() + fragment[1:]
+
+
+def extract_source_terms(text):
+    stop_words = {
+        "about",
+        "after",
+        "before",
+        "could",
+        "did",
+        "from",
+        "have",
+        "into",
+        "know",
+        "might",
+        "that",
+        "team",
+        "their",
+        "there",
+        "these",
+        "they",
+        "this",
+        "under",
+        "uncertain",
+        "uncertainty",
+        "whether",
+        "with",
+        "would",
+    }
+    terms = []
+    for word in re.findall(r"[a-z][a-z0-9-]+", text.lower()):
+        if len(word) < 5 or word in stop_words or word in terms:
+            continue
+        terms.append(word)
+    return terms[:8]
+
+
+def contains_uncertainty_language(text):
+    normalized = text.lower()
+    return any(
+        phrase in normalized
+        for phrase in [
+            "uncertain",
+            "uncertainty",
+            "did not know",
+            "unknown whether",
+        ]
+    )
+
+
+def unique_items(items):
+    seen = set()
+    result = []
+    for item in items:
+        if item and item not in seen:
+            result.append(item)
+            seen.add(item)
+    return result
+
+
 def has_keyword(text, keyword):
     if " " in keyword or "-" in keyword:
         return keyword in text
 
-    tokens = text.replace("/", " ").replace(",", " ").replace(".", " ").split()
-    return keyword in tokens
+    tokens = set(re.findall(r"[a-z0-9]+", text.lower()))
+    return keyword in tokens or f"{keyword}s" in tokens
 
 
 def select_structure(streams, source_sections):

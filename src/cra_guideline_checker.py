@@ -1,3 +1,14 @@
+import re
+
+
+MEASURED_OUTCOME_PATTERN = re.compile(
+    r"\b\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*"
+    r"(?:%|ms|seconds?|minutes?|hours?|nm(?:/minute)?|nm/min(?:ute)?|"
+    r"kv|mv|ma|amps?|v|db|hz|khz|mhz|ghz)(?=$|[\s,.;:)])",
+    re.IGNORECASE,
+)
+
+
 def check_against_cra_guidelines(text, signals):
     text_lower = text.lower()
 
@@ -119,7 +130,15 @@ def check_results_or_learning(text_lower):
         "measured",
     ]
 
-    if any(keyword in text_lower for keyword in learning_keywords):
+    has_result_language = any(keyword in text_lower for keyword in learning_keywords)
+
+    if has_result_language and MEASURED_OUTCOME_PATTERN.search(text_lower):
+        return {
+            "status": "present",
+            "comment": "The description includes specific measured outcomes and technical learning."
+        }
+
+    if has_result_language:
         return {
             "status": "partial",
             "comment": "The description hints at results or learning, but specific measured outcomes should be documented."

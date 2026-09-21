@@ -31,6 +31,7 @@ from case_store import (
 from questions import generate_followup_questions, generate_cra_reference_questions
 from rules import extract_signals
 from report_strategy import build_report_strategy
+from run_capability_benchmark import run_benchmark
 from technical_report import (
     T661_LINE_WORD_LIMITS,
     assess_report_readiness,
@@ -50,6 +51,10 @@ TRAINING_PATH = BASE_DIR / "data" / "sred_training_data.csv"
 EXPECTED_TRAINING_COLUMNS = ["text", "label"]
 EXPECTED_TEST_COLUMNS = ["text", "expected_label"]
 VALID_LABELS = {"routine", "borderline", "needs_more_info", "strong_sred"}
+BENCHMARK_PATHS = [
+    BASE_DIR / "benchmarks" / "t661_capability_benchmark.json",
+    BASE_DIR / "benchmarks" / "t661_holdout_benchmark.json",
+]
 
 
 def validate_training_csv():
@@ -956,6 +961,37 @@ def validate_incomplete_intake_capability(model):
     print("PASS: assessed incomplete unstructured client narratives")
 
 
+def validate_t661_capability_benchmarks(model):
+    total_passed = 0
+    total_cases = 0
+
+    print("\nT661 capability benchmark checks")
+    print("=" * 80)
+
+    for benchmark_path in BENCHMARK_PATHS:
+        benchmark_data = json.loads(benchmark_path.read_text(encoding="utf-8"))
+        result = run_benchmark(benchmark_data, model)
+        total_passed += result["passed"]
+        total_cases += result["total"]
+
+        if result["passed"] != result["total"]:
+            failures = [
+                f"{case['id']}: {'; '.join(case['failures'])}"
+                for case in result["results"]
+                if not case["passed"]
+            ]
+            raise AssertionError(
+                f"{benchmark_path.name} failed:\n" + "\n".join(failures)
+            )
+
+        print(
+            f"PASS: {benchmark_path.name} "
+            f"({result['passed']}/{result['total']})"
+        )
+
+    print(f"PASS: combined T661 benchmark ({total_passed}/{total_cases})")
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -1048,3 +1084,4 @@ validate_t661_questionnaire_drafting(model)
 validate_report_strategy_layer(model)
 validate_llm_report_agent_layer()
 validate_incomplete_intake_capability(model)
+validate_t661_capability_benchmarks(model)

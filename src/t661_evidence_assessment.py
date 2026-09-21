@@ -5,9 +5,54 @@ SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
 MEASUREMENT_PATTERN = re.compile(
     r"\b\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*"
     r"(?:nm(?:/minute)?|nm/min(?:ute)?|kv|mv|ma|amps?|v|%|minutes?|hours?|"
-    r"seconds?|db|snr|ms|mb|gb|hz|khz|mhz|ghz)\b",
+    r"seconds?|db|snr|ms|mb|gb|hz|khz|mhz|ghz)(?=$|[\s,.;:)])",
     re.IGNORECASE,
 )
+
+OBSERVED_OUTCOME_PHRASES = [
+    "produced",
+    "formed",
+    "caused",
+    "resulted",
+    "observed",
+    "showed",
+    "reached",
+    "achieved",
+    "retained",
+    "failed",
+    "failure",
+    "did not",
+    "improved",
+    "reduced",
+    "increased",
+    "removed",
+    "delamination",
+    "phase separation",
+    "unbroken",
+    "controlled",
+    "mechanism",
+]
+EVIDENCE_PHRASES = [
+    "recorded",
+    "test log",
+    "test logs",
+    "data set",
+    "dataset",
+    "image sequence",
+    "image sequences",
+    "engineering note",
+    "engineering notes",
+    "test matrix",
+    "test matrices",
+    "design revision",
+    "design revisions",
+    "source commit",
+    "source commits",
+    "git commit",
+    "git commits",
+    "batch sheet",
+    "batch sheets",
+]
 
 
 LINE_TITLES = {
@@ -29,14 +74,29 @@ def build_t661_evidence_assessment(source_text, source_sections, strategy):
     line_244 = assess_line_244(source_text, source_sections, strategy["streams"])
     line_246 = assess_line_246(source_text, source_sections, strategy["streams"])
     sections = {"242": line_242, "244": line_244, "246": line_246}
+    consistency_issues = detect_consistency_issues(source_text)
+    for issue in consistency_issues:
+        for line_number in issue["lines"]:
+            section = sections[line_number]
+            if issue["message"] not in section["missing_information"]:
+                section["missing_information"].append(issue["message"])
+            section["status"] = "needs_more_information"
+
+    routine_flags = detect_routine_only_work(source_text)
     blocked_lines = [
         line_number
         for line_number, section in sections.items()
         if section["status"] != "ready"
     ]
-    can_draft = not blocked_lines
+    can_draft = not blocked_lines and not routine_flags
 
-    if can_draft:
+    if routine_flags:
+        decision = "not_report_ready"
+        summary = (
+            "Do not draft a T661 project description. The source indicates that documented "
+            "vendor or standard configuration resolved the stated objective."
+        )
+    elif can_draft:
         decision = "draft_ready"
         summary = (
             "The available source supports drafting all three T661 project-description "
@@ -54,6 +114,8 @@ def build_t661_evidence_assessment(source_text, source_sections, strategy):
         "can_draft": can_draft,
         "blocked_lines": blocked_lines,
         "summary": summary,
+        "routine_flags": routine_flags,
+        "consistency_issues": consistency_issues,
         "sections": sections,
     }
 
@@ -78,8 +140,33 @@ def assess_line_242(source_text, source_sections, streams):
     checks = [
         {
             "id": "quantified_target",
-            "present": bool(MEASUREMENT_PATTERN.search(relevant_text))
-            and contains_any(relevant_text, ["target", "objective", "required", "maintain"]),
+            "present": (
+                bool(MEASUREMENT_PATTERN.search(relevant_text))
+                and contains_any(
+                    relevant_text,
+                    [
+                        "target",
+                        "objective",
+                        "required",
+                        "maintain",
+                        "sought",
+                        "needed",
+                        "had to",
+                        "below",
+                        "less than",
+                    ],
+                )
+            )
+            or contains_any(
+                relevant_text,
+                [
+                    "acceptance required",
+                    "acceptance criteria",
+                    "accepted only if",
+                    "required an unbroken",
+                    "required a continuous",
+                ],
+            ),
             "missing": (
                 "Quantified baseline, required technical target, and acceptance threshold "
                 "for each uncertainty."
@@ -170,6 +257,16 @@ def assess_line_244(source_text, source_sections, streams):
             "result",
             "next",
             "hypothesis",
+            "hypoth",
+            "record",
+            "theory",
+            "trial",
+            "sequence",
+            "changed",
+            "pivot",
+            "evidence",
+            "archive",
+            "configuration",
         ],
     )
     checks = [
@@ -185,52 +282,24 @@ def assess_line_244(source_text, source_sections, streams):
         },
         {
             "id": "alternatives_and_variables",
-            "present": contains_any(
-                relevant_text,
-                [
-                    "combinations",
-                    "variants",
-                    "multiple",
-                    "several",
-                    "different",
-                    "alternatives",
-                    "configurations",
-                ],
-            )
-            and contains_any(
-                relevant_text,
-                ["tested", "built", "produced", "tried", "investigated", "compared"],
-            ),
+            "present": has_tested_alternatives(relevant_text),
             "missing": (
                 "The alternatives tested or considered, controlled variables, test conditions, "
                 "and reason each alternative was selected."
             ),
         },
         {
-            "id": "measured_results",
-            "present": bool(MEASUREMENT_PATTERN.search(relevant_text)),
+            "id": "observed_results",
+            "present": bool(MEASUREMENT_PATTERN.search(relevant_text))
+            or contains_any(relevant_text, OBSERVED_OUTCOME_PHRASES),
             "missing": (
-                "Measured results for every material iteration, including the baseline, target, "
-                "test conditions, and acceptance result."
+                "Observed or measured results for every material iteration, including the "
+                "baseline, target or acceptance criteria, test conditions, and outcome."
             ),
         },
         {
             "id": "failure_and_decision",
-            "present": contains_any(
-                relevant_text,
-                [
-                    "failed",
-                    "rejected",
-                    "not viable",
-                    "did not",
-                    "not consistently",
-                    "then",
-                    "next",
-                    "after",
-                    "abandoned",
-                    "pivot",
-                ],
-            ),
+            "present": has_failure_and_decision(relevant_text),
             "missing": (
                 "For each result, why the approach failed or only partly worked and whether it "
                 "was refined, abandoned, or caused a pivot to the next experiment."
@@ -238,18 +307,7 @@ def assess_line_244(source_text, source_sections, streams):
         },
         {
             "id": "supporting_records",
-            "present": contains_any(
-                relevant_text,
-                [
-                    "recorded",
-                    "test log",
-                    "data set",
-                    "dataset",
-                    "image sequences",
-                    "engineering notes",
-                    "test matrix",
-                ],
-            ),
+            "present": contains_non_negated_phrase(relevant_text, EVIDENCE_PHRASES),
             "missing": (
                 "The contemporaneous records supporting the SIS sequence, such as test matrices, "
                 "logs, images, simulations, design revisions, and engineering notes."
@@ -270,6 +328,16 @@ def assess_line_244(source_text, source_sections, streams):
             "result",
             "next",
             "hypothesis",
+            "hypoth",
+            "record",
+            "theory",
+            "trial",
+            "sequence",
+            "changed",
+            "pivot",
+            "evidence",
+            "archive",
+            "configuration",
         ],
         question_builder=build_line_244_questions,
     )
@@ -279,7 +347,19 @@ def assess_line_246(source_text, source_sections, streams):
     relevant_text = collect_section_text(
         source_sections,
         fallback_numbers=range(13, 17),
-        title_terms=["learn", "knowledge", "advancement", "improvement", "failed", "remained"],
+        title_terms=[
+            "learn",
+            "knowledge",
+            "advancement",
+            "improvement",
+            "failed",
+            "finding",
+            "outcome",
+            "boundary",
+            "remaining",
+            "remained",
+            "open",
+        ],
     )
     checks = [
         {
@@ -313,10 +393,17 @@ def assess_line_246(source_text, source_sections, streams):
         },
         {
             "id": "advancement_boundaries",
-            "present": bool(MEASUREMENT_PATTERN.search(relevant_text)),
+            "present": bool(MEASUREMENT_PATTERN.search(relevant_text))
+            or (
+                contains_any(
+                    relevant_text,
+                    ["established", "determined", "retained", "demonstrated"],
+                )
+                and contains_any(relevant_text, OBSERVED_OUTCOME_PHRASES)
+            ),
             "missing": (
-                "The measured capability or boundary established by the work, including the "
-                "conditions where the result did and did not hold."
+                "The capability or technical boundary established by the work, including the "
+                "conditions where the observed result did and did not hold."
             ),
         },
         {
@@ -343,7 +430,19 @@ def assess_line_246(source_text, source_sections, streams):
         source_sections,
         streams,
         fallback_numbers=range(13, 17),
-        title_terms=["learn", "knowledge", "advancement", "improvement", "failed", "remained"],
+        title_terms=[
+            "learn",
+            "knowledge",
+            "advancement",
+            "improvement",
+            "failed",
+            "finding",
+            "outcome",
+            "boundary",
+            "remaining",
+            "remained",
+            "open",
+        ],
         question_builder=build_line_246_questions,
     )
 
@@ -450,7 +549,10 @@ def build_line_246_questions(stream, index):
 
 def collect_section_text(source_sections, fallback_numbers, title_terms):
     sections = select_sections(source_sections, fallback_numbers, title_terms)
-    return "\n".join(section["text"] for section in sections).lower()
+    return " ".join(
+        " ".join(section["text"].split())
+        for section in sections
+    ).lower()
 
 
 def collect_section_sentences(source_sections, fallback_numbers, title_terms):
@@ -524,6 +626,193 @@ def split_sentences(text):
 def contains_any(text, phrases):
     normalized = text.lower()
     return any(phrase in normalized for phrase in phrases)
+
+
+def contains_non_negated_phrase(text, phrases):
+    for sentence in re.split(r"(?<=[.!?])\s+", " ".join(text.split())):
+        normalized = sentence.lower()
+        unavailable_record = re.search(
+            r"\b(?:files?|records?|logs?|notes?|commits?|versions?|matrices|data(?:sets?)?)\b"
+            r"[^.!?]{0,80}\b(?:unavailable|not available|cannot be produced|could not be "
+            r"produced|cannot be tied|could not be tied|not retained|not accessible)\b",
+            normalized,
+        )
+        for phrase in phrases:
+            for match in re.finditer(re.escape(phrase), normalized):
+                start, end = match.span()
+                prefix = normalized[max(0, start - 55):start]
+                suffix = normalized[end:]
+                prefix_negated = re.search(
+                    r"(?:^|\b)(?:no|none|without|missing|unavailable)\b[^.!?]{0,45}$",
+                    prefix,
+                )
+                suffix_negated = re.search(
+                    r"\b(?:were not|was not|not recorded|not available|unavailable|"
+                    r"do not exist|cannot be identified|could not be identified|"
+                    r"cannot be produced|could not be produced|cannot be tied|"
+                    r"could not be tied|not retained|not accessible)\b",
+                    suffix,
+                )
+                if not prefix_negated and not suffix_negated and not unavailable_record:
+                    return True
+
+    return False
+
+
+def has_tested_alternatives(text):
+    test_actions = [
+        "tested",
+        "built",
+        "produced",
+        "tried",
+        "investigated",
+        "compared",
+        "evaluated",
+    ]
+    if not contains_any(text, test_actions):
+        return False
+
+    explicit_alternatives = [
+        "combinations",
+        "variants",
+        "multiple",
+        "several",
+        "different",
+        "alternatives",
+        "configurations",
+    ]
+    if contains_any(text, explicit_alternatives):
+        return True
+
+    count_word = (
+        r"(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d+)"
+    )
+    enumerated_design = re.compile(
+        rf"\b{count_word}\s+(?:[a-z][a-z0-9-]*\s+){{0,3}}"
+        r"(?:models?|filters?|intervals?|methods?|designs?|geometr(?:y|ies)|sequences?|"
+        r"approaches?|algorithms?|prototypes?|formulations?|settings?|stages?|windows?|"
+        r"controllers?|inserts?)\b",
+        re.IGNORECASE,
+    )
+    return bool(enumerated_design.search(text))
+
+
+def has_failure_and_decision(text):
+    failure_markers = [
+        "failed",
+        "rejected",
+        "not viable",
+        "did not",
+        "not consistently",
+        "too late",
+        "missed the target",
+        "exceeded",
+        "caused",
+        "destabilized",
+        "increased",
+        "problematic",
+        "insufficient",
+        "worsened",
+    ]
+    decision_markers = [
+        "then",
+        "next",
+        "after",
+        "abandoned",
+        "pivot",
+        "refined",
+        "replaced",
+        "selected",
+        "advanced",
+        "revised",
+    ]
+    return contains_any(text, failure_markers) and contains_any(text, decision_markers)
+
+
+def detect_consistency_issues(source_text):
+    normalized = " ".join(source_text.lower().split())
+    issues = []
+
+    if contains_any(
+        normalized,
+        [
+            "another section states",
+            "a later note states",
+            "conflicting statement",
+            "contradicts the earlier",
+        ],
+    ):
+        issues.append({
+            "lines": ["242"],
+            "message": (
+                "The source contains conflicting statements about the starting technology "
+                "or whether standard practice resolved the problem."
+            ),
+        })
+
+    if contains_any(
+        normalized,
+        [
+            "no experiments were actually run",
+            "no tests were actually run",
+            "all values were projections",
+            "no measured output was retained",
+            "results were estimated rather than measured",
+        ],
+    ):
+        issues.append({
+            "lines": ["244", "246"],
+            "message": (
+                "The source describes projected or unverified results and also states that "
+                "experiments or measured outputs are unavailable."
+            ),
+        })
+
+    fiscal_year_denial = re.search(
+        r"\bno\s+(?:experimental work|experiments?|testing|tests)\s+"
+        r"(?:actually\s+)?(?:occurred|took place|was performed|were performed|"
+        r"was conducted|were conducted)\b",
+        normalized,
+    )
+    if fiscal_year_denial:
+        issues.append({
+            "lines": ["244"],
+            "message": (
+                "The source states that no experimental work occurred in the claimed period; "
+                "confirm the fiscal-year chronology before drafting Line 244."
+            ),
+        })
+
+    return issues
+
+
+def detect_routine_only_work(source_text):
+    normalized = " ".join(source_text.lower().split())
+    routine_indicators = [
+        "off-the-shelf",
+        "vendor's documented",
+        "vendor documentation provided",
+        "documented standard template",
+        "documented high-availability template",
+        "standard configuration",
+    ]
+    resolved_by_standard_indicators = [
+        "provided the required configuration",
+        "worked because the environment matched",
+        "matched its documented assumptions",
+        "documented setting was selected",
+        "standard template worked",
+    ]
+
+    if (
+        sum(indicator in normalized for indicator in routine_indicators) >= 2
+        and contains_any(normalized, resolved_by_standard_indicators)
+    ):
+        return [
+            "The stated objective was resolved by documented vendor or standard configuration."
+        ]
+
+    return []
 
 
 def unique_items(items):

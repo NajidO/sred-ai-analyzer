@@ -1,0 +1,168 @@
+{
+  "name": "SR&ED T661 Holdout Generalization Benchmark",
+  "cases": [
+    {
+      "id": "holdout_complete_robotic_gripper",
+      "category": "complete_new_domain",
+      "description": "Complete robotic-control project in a domain not represented by a hard-coded stream.",
+      "text": [
+        "## 1. Objective\nThe gripper had to hold flexible parts with less than 3 mm deformation and no more than 4% slip during a 40-second transfer.",
+        "## 2. Starting point\nThe existing fixed-force controller produced 11 mm deformation. Supplier force tables could not predict deformation when part stiffness varied within a batch.",
+        "## 3. Uncertainty\nThe team did not know whether pressure distribution inferred from motor current could control grip force before visible deformation occurred.",
+        "## 4. Standard limitation\nStandard force feedback was insufficient because identical total force produced different local deformation on parts with different stiffness distributions.",
+        "## 5. Hypothesis\nThe team expected a current-gradient signal to identify the onset of local deformation.",
+        "## 6. Tests\nThe team tested five current filters and four force-update intervals. Two filters reacted too late and produced more than 8 mm deformation. A fast filter reduced deformation to 4 mm but caused 7% slip.",
+        "## 7. Pivot\nThe team compared three distributed pressure-estimation models and refined the force update. The selected combination produced 2.6 mm deformation and 3.2% slip in 38 seconds.",
+        "## 11. Records\nMotor-current traces, force logs, camera measurements, model versions, test matrices, and engineering notes recorded each alternative and decision.",
+        "## 13. Knowledge\nThe team determined that total motor current was not viable because different stiffness distributions produced the same aggregate signal. Current gradients established an earlier indicator of local deformation.",
+        "## 14. Boundary\nThe selected method established 2.6 mm deformation and 3.2% slip for the tested stiffness range.",
+        "## 16. Remaining uncertainty\nParts with discontinuous internal reinforcement remained technologically uncertain at fiscal year-end."
+      ],
+      "expected": {
+        "can_draft": true,
+        "blocked_lines_include": [],
+        "ready_lines_include": ["242", "244", "246"],
+        "minimum_streams": 1,
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "holdout_complete_qualitative_ceramic",
+      "category": "qualitative_evidence",
+      "description": "Complete qualitative investigation using morphology and fracture observations rather than numeric thresholds.",
+      "text": [
+        "## 1. Objective\nAcceptance required a continuous ceramic edge, no branching fracture after firing, and full bonding at the insert interface.",
+        "## 2. Starting method\nThe supplier firing sequence produced branching edge fractures and separation at the insert.",
+        "## 3. Uncertainty\nIt was unknown whether binder staging could preserve both edge continuity and insert bonding during firing.",
+        "## 4. Standard limitation\nPublished firing guidance was insufficient because it did not address the competing shrinkage directions around the insert.",
+        "## 5. Theory\nThe team expected staged binder removal to prevent the early edge fracture.",
+        "## 6. Trials\nSeveral removal sequences and hold stages were tested against standard-sequence controls. Early removal prevented insert separation but formed a branching edge fracture. Late removal preserved the edge but caused complete insert separation.",
+        "## 7. Further trial\nA split removal stage produced a continuous edge and retained insert bonding after firing. The observation was repeated on separate batches.",
+        "## 11. Evidence\nBatch sheets, labelled fracture images, microscopy notes, sequence versions, and witness records documented the controls and alternatives.",
+        "## 13. Findings\nThe team determined that neither early nor late removal was viable because each concentrated shrinkage at a different interface. Split removal controlled the competing fracture paths.",
+        "## 16. Open boundary\nBehaviour with inserts containing internal channels remained technologically uncertain at year-end."
+      ],
+      "expected": {
+        "can_draft": true,
+        "blocked_lines_include": [],
+        "ready_lines_include": ["242", "244", "246"],
+        "minimum_streams": 1,
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "holdout_missing_standard_practice_gap",
+      "category": "missing_uncertainty_support",
+      "description": "Detailed tests and learning that never explain available knowledge or why standard practice was insufficient.",
+      "text": [
+        "## 1. Objective\nThe system targeted 96% classification accuracy and latency below 70 ms.",
+        "## 3. Uncertainty\nThe team did not know whether temporal features could meet both targets.",
+        "## 5. Hypothesis\nThe team expected a temporal model to improve accuracy.",
+        "## 6. Tests\nThe team tested multiple sequence lengths and four model configurations. Two failed below 85% and were abandoned. The selected model reached 96.4% and 66 ms.",
+        "## 11. Records\nTest matrices, datasets, model versions, logs, and commits recorded the experiments.",
+        "## 13. Knowledge\nThe team determined that short event order was required because static features merged the classes.",
+        "## 14. Boundary\nThe tested model established 96.4% accuracy and 66 ms on the reference distribution.",
+        "## 16. Remaining uncertainty\nUnseen event combinations remained technologically uncertain at year-end."
+      ],
+      "expected": {
+        "can_draft": false,
+        "blocked_lines_include": ["242"],
+        "ready_lines_include": ["244", "246"],
+        "minimum_streams": 1,
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "holdout_routine_data_migration",
+      "category": "routine_false_positive",
+      "description": "Standard cloud migration work with extensive testing and metrics but no technological uncertainty.",
+      "text": [
+        "## 1. Goal\nThe company migrated reports to an off-the-shelf cloud warehouse with refresh under 15 minutes.",
+        "## 2. Available method\nVendor documentation specified the supported migration utility, schema mapping, and scaling settings.",
+        "## 3. Work\nThe team configured the documented utility and tested several standard warehouse sizes. The medium setting refreshed reports in 12 minutes and was selected.",
+        "## 4. Validation\nStandard reconciliation queries showed 100% row-count agreement. No custom algorithm, unresolved technological uncertainty, or experimental advancement was involved.",
+        "## 11. Records\nMigration tickets, vendor support notes, configuration exports, and validation logs documented the implementation."
+      ],
+      "expected": {
+        "can_draft": false,
+        "blocked_lines_include": ["242", "246"],
+        "ready_lines_include": [],
+        "minimum_streams": 1,
+        "allow_generic_stream": true,
+        "prediction_one_of": ["routine", "borderline"]
+      }
+    },
+    {
+      "id": "holdout_conflicting_fiscal_year",
+      "category": "chronology_contradiction",
+      "description": "Otherwise complete evidence with conflicting statements about whether the experiments occurred in the claimed year.",
+      "text": [
+        "## 1. Objective\nThe controller targeted drift below 2% and response below 20 ms during fiscal 2025.",
+        "## 2. Starting technology\nThe existing controller produced 8% drift. Standard compensation failed after rapid load changes.",
+        "## 3. Uncertainty\nThe team did not know whether load-history compensation could meet both targets.",
+        "## 5. Hypothesis\nThe team expected a history model to reduce drift.",
+        "## 6. Fiscal-year work\nThe narrative states that five models were tested between March and October 2025. Two failed above 5% drift. The selected model reached 1.8% drift and 18 ms.",
+        "## 11. Records\nModel versions, test logs, load traces, and commits record each iteration. The attached project ledger states that all experiments actually began in February 2026 and that no experimental work occurred in 2025.",
+        "## 13. Knowledge\nThe team determined that load history was required because identical current loads followed different drift paths.",
+        "## 14. Boundary\nThe method established 1.8% drift and 18 ms under the reference load sequence.",
+        "## 16. Remaining uncertainty\nAbrupt reverse loading remained technologically uncertain at year-end."
+      ],
+      "expected": {
+        "can_draft": false,
+        "blocked_lines_include": ["244"],
+        "ready_lines_include": ["242", "246"],
+        "minimum_streams": 1,
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "holdout_unavailable_referenced_records",
+      "category": "negation",
+      "description": "Records are named in the narrative but explicitly unavailable for verification.",
+      "text": [
+        "## 1. Objective\nThe detector targeted 91% recall and false alarms below 5%.",
+        "## 2. Starting technology\nThe existing method reached 63% recall, and standard threshold tuning could not exceed 68%.",
+        "## 3. Uncertainty\nThe team did not know whether event-sequence features could meet both targets.",
+        "## 5. Hypothesis\nThe team expected sequence features to separate the events.",
+        "## 6. Experiments\nSeveral windows and three classifiers were tested. Two failed below 80% recall. The selected model reportedly reached 92% recall and 4.4% false alarms.",
+        "## 11. Evidence status\nTest logs and dataset versions are referenced in the summary, but the files are unavailable and cannot be produced. No source commit can be tied to the reported result.",
+        "## 13. Knowledge\nThe team determined that event order was required because static peaks overlapped.",
+        "## 14. Boundary\nThe reported model reached 92% recall and 4.4% false alarms on reference data.",
+        "## 16. Remaining uncertainty\nOverlapping events remained technologically uncertain at year-end."
+      ],
+      "expected": {
+        "can_draft": false,
+        "blocked_lines_include": ["244"],
+        "ready_lines_include": ["242", "246"],
+        "minimum_streams": 1,
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "holdout_complete_fluid_and_software_streams",
+      "category": "mixed_known_unknown_streams",
+      "description": "Complete project where one stream matches known software vocabulary and another is an unseen fluid-control domain.",
+      "text": [
+        "## 1. Objective\nThe dosing system had to keep mixture variation below 2% while software response remained below 25 ms across flow from 10 to 80 litres per minute.",
+        "## 2. Starting technology\nThe fixed valve geometry produced 9% mixture variation. The polling controller produced 48 ms response. Supplier sizing equations could not predict recirculation during fast valve changes.",
+        "## 3. Uncertainties\nThe team did not know whether staged valve geometry could suppress recirculation or whether an event-driven queue could maintain response without destabilizing flow control.",
+        "## 4. Standard limitations\nStandard valve sizing was insufficient because transient recirculation reversed the concentration gradient. Standard polling could not meet 25 ms.",
+        "## 5. Hypotheses\nThe team expected staged valve inserts and a bounded event queue to meet the targets.",
+        "## 6. Fluid tests\nFour insert geometries and five valve sequences were tested. Two geometries increased recirculation and were abandoned. The staged insert reduced variation to 2.7%.",
+        "## 7. Software tests\nThree queue designs were compared. The fastest reached 18 ms but destabilized valve updates.",
+        "## 8. Integrated pivot\nA synchronized insert sequence and bounded queue reached 1.8% mixture variation and 22 ms response.",
+        "## 11. Records\nFlow traces, concentration measurements, queue logs, geometry files, test matrices, commits, and decision notes recorded all alternatives.",
+        "## 13. Knowledge\nThe team determined that steady-state valve sizing was not viable because transient recirculation dominated mixing. It established that queue and valve state had to be bounded together.",
+        "## 14. Boundary\nThe integrated method established 1.8% variation and 22 ms across the tested flow range.",
+        "## 16. Remaining uncertainty\nOperation with gas entrainment remained technologically uncertain at year-end."
+      ],
+      "expected": {
+        "can_draft": true,
+        "blocked_lines_include": [],
+        "ready_lines_include": ["242", "244", "246"],
+        "minimum_streams": 2,
+        "allow_generic_stream": false
+      }
+    }
+  ]
+}

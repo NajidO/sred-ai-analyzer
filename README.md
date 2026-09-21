@@ -29,6 +29,10 @@ The classifier predicts one of four labels:
 data/
   sred_training_data.csv
   test_examples.csv
+benchmarks/
+  BENCHMARK_FINDINGS.md
+  t661_capability_benchmark.json
+  t661_holdout_benchmark.json
 src/
   add_cra_batch.py
   agent_assessment.py
@@ -40,6 +44,7 @@ src/
   run_tests.py
   intake_agent.py
   llm_report_agent.py
+  run_capability_benchmark.py
   predict_sred.py
   cra_guideline_checker.py
   cra_reference.py
@@ -191,6 +196,24 @@ test of the local classifier, report strategy, and evidence checks. This fixture
 produce `needs_more_information` and no T661 draft. It does not make an OpenAI API
 request.
 
+## Run The T661 Capability Benchmarks
+
+The repository includes two offline benchmark sets covering complete, incomplete,
+routine, contradictory, negated, qualitative, multi-stream, unstructured, and
+prompt-injection cases:
+
+```bash
+venv/bin/python src/run_capability_benchmark.py
+venv/bin/python src/run_capability_benchmark.py \
+  benchmarks/t661_holdout_benchmark.json
+```
+
+The normal test runner executes both sets as regression checks. The cases test the
+local sklearn classifier, evidence gate, stream planner, and deterministic drafting
+controls. They do not call an OpenAI model and do not establish legal eligibility.
+See `benchmarks/BENCHMARK_FINDINGS.md` for the baseline failures, fixes, current
+results, and limits of the evaluation.
+
 ## Add CRA-Grounded Training Examples
 
 ```bash
@@ -215,13 +238,17 @@ Case manager checks: PASS
 Technical report generator checks: PASS
 T661 project description checks: PASS
 Report strategy planner checks: PASS
+T661 capability benchmark: 18/18
 Incomplete intake gaps detected: 10/10
 Incomplete intake T661 drafts generated: 0
 Complete questionnaire T661 drafting: PASS
 Unstructured intake assessment: PASS
 ```
 
-This accuracy is only for the current controlled test set. More diverse examples are still needed before treating the model as reliable.
+The classifier accuracy and benchmark scores are only for small, synthetic controlled
+sets. They are regression signals, not estimates of production accuracy. Real,
+independently labelled project records and analyst review are still required before
+treating the analyzer as reliable.
 
 ## Next Improvements
 

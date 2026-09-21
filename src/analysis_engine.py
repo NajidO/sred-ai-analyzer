@@ -8,7 +8,7 @@ from evidence_mapper import map_to_sred_framework
 from explanation import generate_label_explanation
 from questions import generate_followup_questions, generate_cra_reference_questions
 from recommendation import generate_recommendation
-from rules import extract_signals
+from rules import apply_routine_prediction_guardrail, extract_signals
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -25,6 +25,12 @@ def analyze_text(text, model):
     labels = model.classes_
 
     signals = extract_signals(text)
+    prediction, probabilities = apply_routine_prediction_guardrail(
+        prediction,
+        probabilities,
+        labels,
+        signals,
+    )
     questions = generate_followup_questions(prediction, signals)
     cra_reference_questions = generate_cra_reference_questions()
     recommendation = generate_recommendation(
