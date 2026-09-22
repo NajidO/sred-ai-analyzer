@@ -1,7 +1,7 @@
 import re
 
 
-SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
+SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+")
 MEASUREMENT_PATTERN = re.compile(
     r"\b\d+(?:\.\d+)?(?:\s*(?:-|to)\s*\d+(?:\.\d+)?)?\s*"
     r"(?:nm(?:/minute)?|nm/min(?:ute)?|kv|mv|ma|amps?|v|%|minutes?|hours?|"
@@ -52,6 +52,31 @@ EVIDENCE_PHRASES = [
     "git commits",
     "batch sheet",
     "batch sheets",
+    "cad revision",
+    "cad revisions",
+    "cycle log",
+    "cycle logs",
+    "fracture image",
+    "fracture images",
+    "mesh study",
+    "mesh studies",
+    "model file",
+    "model files",
+    "pressure trace",
+    "pressure traces",
+    "procedure revision",
+    "procedure revisions",
+    "review note",
+    "review notes",
+    "sensor trace",
+    "sensor traces",
+    "simulation file",
+    "simulation files",
+    "thermal trace",
+    "thermal traces",
+    "versioned",
+    "witness record",
+    "witness records",
 ]
 
 
@@ -130,46 +155,47 @@ def assess_line_242(source_text, source_sections, streams):
             "improve",
             "overview",
             "objective",
+            "goal",
+            "problem",
             "technology",
             "challenge",
             "difficulty",
+            "uncertaint",
             "uncertainty",
             "standard",
+            "available",
+            "existing",
+            "knowledge base",
+            "prior",
+            "published",
+            "starting",
         ],
     )
     checks = [
         {
-            "id": "quantified_target",
-            "present": (
-                bool(MEASUREMENT_PATTERN.search(relevant_text))
-                and contains_any(
-                    relevant_text,
-                    [
-                        "target",
-                        "objective",
-                        "required",
-                        "maintain",
-                        "sought",
-                        "needed",
-                        "had to",
-                        "below",
-                        "less than",
-                    ],
-                )
-            )
-            or contains_any(
+            "id": "technical_objective",
+            "present": contains_any(
                 relevant_text,
                 [
                     "acceptance required",
                     "acceptance criteria",
                     "accepted only if",
+                    "attempted to",
+                    "goal",
+                    "had to",
+                    "intended to",
+                    "objective",
+                    "required",
                     "required an unbroken",
                     "required a continuous",
+                    "sought",
+                    "target",
+                    "trying to",
                 ],
             ),
             "missing": (
-                "Quantified baseline, required technical target, and acceptance threshold "
-                "for each uncertainty."
+                "The technical objective, capability sought, and starting point for each "
+                "uncertainty. Use measured or precise qualitative criteria where available."
             ),
         },
         {
@@ -193,30 +219,7 @@ def assess_line_242(source_text, source_sections, streams):
         },
         {
             "id": "standard_practice_limit",
-            "present": contains_any(
-                relevant_text,
-                [
-                    "did not provide",
-                    "did not accurately",
-                    "could not",
-                    "insufficient",
-                    "failed",
-                    "not simply",
-                    "did not work",
-                ],
-            )
-            and contains_any(
-                relevant_text,
-                [
-                    "standard",
-                    "existing",
-                    "published",
-                    "supplier",
-                    "known",
-                    "simulation",
-                    "calculation",
-                ],
-            ),
+            "present": has_standard_practice_gap(relevant_text),
             "missing": (
                 "The known methods, calculations, supplier guidance, or prior designs tried "
                 "and the observed reason each could not resolve the uncertainty."
@@ -235,11 +238,20 @@ def assess_line_242(source_text, source_sections, streams):
             "improve",
             "overview",
             "objective",
+            "goal",
+            "problem",
             "technology",
             "challenge",
             "difficulty",
+            "uncertaint",
             "uncertainty",
             "standard",
+            "available",
+            "existing",
+            "knowledge base",
+            "prior",
+            "published",
+            "starting",
         ],
         question_builder=build_line_242_questions,
     )
@@ -254,6 +266,7 @@ def assess_line_244(source_text, source_sections, streams):
             "work",
             "test",
             "experiment",
+            "investigation",
             "result",
             "next",
             "hypothesis",
@@ -267,6 +280,12 @@ def assess_line_244(source_text, source_sections, streams):
             "evidence",
             "archive",
             "configuration",
+            "analysis",
+            "conclusion",
+            "decision",
+            "finding",
+            "knowledge",
+            "simulation",
         ],
     )
     checks = [
@@ -281,33 +300,50 @@ def assess_line_244(source_text, source_sections, streams):
             ),
         },
         {
+            "id": "investigation_performed",
+            "present": has_completed_investigation(relevant_text),
+            "missing": (
+                "The experiment or analysis actually performed in the claimed tax year, "
+                "including the variables, conditions, comparison, or analytical method."
+            ),
+        },
+        {
             "id": "alternatives_and_variables",
             "present": has_tested_alternatives(relevant_text),
+            "blocking": False,
             "missing": (
-                "The alternatives tested or considered, controlled variables, test conditions, "
-                "and reason each alternative was selected."
+                "Where applicable, identify alternatives tested or considered, controlled "
+                "variables, test conditions, and why each alternative was selected."
             ),
         },
         {
             "id": "observed_results",
-            "present": bool(MEASUREMENT_PATTERN.search(relevant_text))
-            or contains_any(relevant_text, OBSERVED_OUTCOME_PHRASES),
+            "present": has_observed_results(relevant_text),
             "missing": (
                 "Observed or measured results for every material iteration, including the "
                 "baseline, target or acceptance criteria, test conditions, and outcome."
             ),
         },
         {
-            "id": "failure_and_decision",
-            "present": has_failure_and_decision(relevant_text),
+            "id": "conclusion",
+            "present": has_investigation_conclusion(relevant_text),
             "missing": (
-                "For each result, why the approach failed or only partly worked and whether it "
-                "was refined, abandoned, or caused a pivot to the next experiment."
+                "The conclusion drawn from each material result and how it determined the next "
+                "step, selection, refinement, or decision to stop."
+            ),
+        },
+        {
+            "id": "failed_path_or_pivot",
+            "present": has_failure_and_decision(relevant_text),
+            "blocking": False,
+            "missing": (
+                "If an approach failed or only partly worked, explain why it was insufficient "
+                "and whether it was refined, abandoned, or caused a pivot."
             ),
         },
         {
             "id": "supporting_records",
-            "present": contains_non_negated_phrase(relevant_text, EVIDENCE_PHRASES),
+            "present": has_available_supporting_records(relevant_text),
             "missing": (
                 "The contemporaneous records supporting the SIS sequence, such as test matrices, "
                 "logs, images, simulations, design revisions, and engineering notes."
@@ -325,6 +361,7 @@ def assess_line_244(source_text, source_sections, streams):
             "work",
             "test",
             "experiment",
+            "investigation",
             "result",
             "next",
             "hypothesis",
@@ -338,6 +375,12 @@ def assess_line_244(source_text, source_sections, streams):
             "evidence",
             "archive",
             "configuration",
+            "analysis",
+            "conclusion",
+            "decision",
+            "finding",
+            "knowledge",
+            "simulation",
         ],
         question_builder=build_line_244_questions,
     )
@@ -350,6 +393,7 @@ def assess_line_246(source_text, source_sections, streams):
         title_terms=[
             "learn",
             "knowledge",
+            "conclusion",
             "advancement",
             "improvement",
             "failed",
@@ -364,10 +408,7 @@ def assess_line_246(source_text, source_sections, streams):
     checks = [
         {
             "id": "explicit_technical_learning",
-            "present": contains_any(
-                relevant_text,
-                ["determined", "established", "learned", "gained knowledge", "showed"],
-            ),
+            "present": has_completed_technical_learning(relevant_text),
             "missing": (
                 "The technological knowledge established for each TU, stated separately from "
                 "product or business benefits."
@@ -375,17 +416,8 @@ def assess_line_246(source_text, source_sections, streams):
         },
         {
             "id": "causal_learning_from_results",
-            "present": contains_any(
-                relevant_text,
-                [
-                    "because",
-                    "not viable",
-                    "insufficient",
-                    "prevented",
-                    "mechanism",
-                    "relationship",
-                ],
-            ),
+            "present": has_causal_learning(relevant_text),
+            "blocking": False,
             "missing": (
                 "How the observed results and failed alternatives changed the team's technical "
                 "understanding for each TU."
@@ -401,6 +433,7 @@ def assess_line_246(source_text, source_sections, streams):
                 )
                 and contains_any(relevant_text, OBSERVED_OUTCOME_PHRASES)
             ),
+            "blocking": False,
             "missing": (
                 "The capability or technical boundary established by the work, including the "
                 "conditions where the observed result did and did not hold."
@@ -418,6 +451,7 @@ def assess_line_246(source_text, source_sections, streams):
                     "remained problematic",
                 ],
             ),
+            "blocking": False,
             "missing": (
                 "The technological uncertainty that remained at fiscal year-end and the boundary "
                 "between knowledge gained and work still required."
@@ -433,6 +467,7 @@ def assess_line_246(source_text, source_sections, streams):
         title_terms=[
             "learn",
             "knowledge",
+            "conclusion",
             "advancement",
             "improvement",
             "failed",
@@ -461,13 +496,26 @@ def build_section_assessment(
         fallback_numbers,
         title_terms,
     )
-    missing_information = [check["missing"] for check in checks if not check["present"]]
+    missing_information = [
+        check["missing"]
+        for check in checks
+        if not check["present"] and check.get("blocking", True)
+    ]
+    advisory_information = [
+        check["missing"]
+        for check in checks
+        if not check["present"] and not check.get("blocking", True)
+    ]
     status = "ready" if not missing_information else "needs_more_information"
     stream_assessments = []
 
     for index, stream in enumerate(streams, start=1):
         facts = select_stream_facts(relevant_sentences, stream)
-        questions = [] if status == "ready" else question_builder(stream, index)
+        questions = (
+            question_builder(stream, index)
+            if status != "ready" or advisory_information
+            else []
+        )
         stream_assessments.append({
             "stream_id": stream["id"],
             "sis_id": f"SIS{index}",
@@ -482,6 +530,7 @@ def build_section_assessment(
         "status": status,
         "supported_information": unique_items(relevant_sentences)[:15],
         "missing_information": missing_information,
+        "advisory_information": advisory_information,
         "checks": checks,
         "stream_assessments": stream_assessments,
     }
@@ -550,7 +599,7 @@ def build_line_246_questions(stream, index):
 def collect_section_text(source_sections, fallback_numbers, title_terms):
     sections = select_sections(source_sections, fallback_numbers, title_terms)
     return " ".join(
-        " ".join(section["text"].split())
+        " ".join(f"{section['title']} {section['text']}".split())
         for section in sections
     ).lower()
 
@@ -628,9 +677,246 @@ def contains_any(text, phrases):
     return any(phrase in normalized for phrase in phrases)
 
 
+def has_standard_practice_gap(text):
+    knowledge_markers = [
+        "available",
+        "closed-form",
+        "existing",
+        "known",
+        "manual",
+        "prior",
+        "published",
+        "standard",
+        "supplier",
+        "vendor",
+    ]
+    limitation_markers = [
+        "assumed",
+        "could not",
+        "cannot",
+        "did not address",
+        "did not accurately",
+        "did not provide",
+        "did not work",
+        "differed",
+        "failed",
+        "insufficient",
+        "not valid",
+        "omitted",
+        "outside",
+        "produced",
+        "was not applicable",
+        "were not applicable",
+    ]
+    return contains_any(text, knowledge_markers) and contains_any(text, limitation_markers)
+
+
+def has_completed_investigation(text):
+    action_phrases = [
+        "analysed",
+        "analyzed",
+        "built",
+        "compared",
+        "constructed",
+        "evaluated",
+        "instrumented",
+        "manufactured",
+        "measured",
+        "modelled",
+        "modeled",
+        "performed",
+        "produced",
+        "refined",
+        "repeated",
+        "simulated",
+        "tested",
+        "varied",
+    ]
+    return contains_non_future_action(text, action_phrases)
+
+
+def has_observed_results(text):
+    result_markers = OBSERVED_OUTCOME_PHRASES + [
+        "completed",
+        "predicted",
+        "remained",
+        "stabilized",
+        "stopped",
+        "supported the hypothesis",
+        "within the width",
+    ]
+    for sentence in split_sentences(text):
+        normalized = sentence.lower()
+        if is_future_or_projected_statement(normalized):
+            continue
+        if contains_any(normalized, result_markers):
+            return True
+        if MEASUREMENT_PATTERN.search(normalized) and contains_any(
+            normalized,
+            ["after", "at", "reached", "reduced", "returned", "rose", "within"],
+        ):
+            return True
+    return False
+
+
+def has_investigation_conclusion(text):
+    conclusion_markers = [
+        "abandoned",
+        "concluded",
+        "conclusion",
+        "determined",
+        "established",
+        "not viable",
+        "refined",
+        "rejected",
+        "revised",
+        "selected",
+        "showed",
+        "stopped",
+        "supported the hypothesis",
+        "therefore",
+    ]
+    return contains_non_future_action(text, conclusion_markers)
+
+
+def has_completed_technical_learning(text):
+    if contains_any(
+        text,
+        [
+            "learned a lot",
+            "system was better",
+            "product was better",
+            "customers preferred",
+            "business improved",
+        ],
+    ) and not contains_any(
+        text,
+        ["because", "controlled", "mechanism", "relationship", "required", "technical"],
+    ):
+        return False
+
+    learning_markers = [
+        "concluded",
+        "demonstrated",
+        "determined",
+        "established",
+        "gained knowledge",
+        "governed",
+        "learned",
+        "narrowed",
+        "participated",
+        "revealed",
+        "showed",
+    ]
+    return contains_non_future_action(text, learning_markers)
+
+
+def has_causal_learning(text):
+    return has_completed_technical_learning(text) and contains_any(
+        text,
+        [
+            "because",
+            "controlled",
+            "explained",
+            "governed",
+            "interaction",
+            "mechanism",
+            "not viable",
+            "participated",
+            "relationship",
+            "required",
+            "set the",
+        ],
+    )
+
+
+def contains_non_future_action(text, phrases):
+    for sentence in split_sentences(text):
+        normalized = sentence.lower()
+        for phrase in phrases:
+            for match in re.finditer(re.escape(phrase), normalized):
+                prefix = normalized[max(0, match.start() - 65):match.start()]
+                if re.search(
+                    r"\b(?:will|would|should|could|plan(?:ned)? to|intend(?:ed)? to|"
+                    r"expected to|projected to|to be)\b[^.!?]{0,55}$",
+                    prefix,
+                ):
+                    continue
+                return True
+    return False
+
+
+def is_future_or_projected_statement(text):
+    return contains_any(
+        text,
+        [
+            "expected result",
+            "has yet to",
+            "next year",
+            "planned result",
+            "projected result",
+            "should establish",
+            "should reach",
+            "will be created",
+            "will compare",
+            "will test",
+        ],
+    )
+
+
+def has_available_supporting_records(text):
+    if contains_non_negated_phrase(text, EVIDENCE_PHRASES):
+        return True
+
+    record_nouns = [
+        "data",
+        "files",
+        "images",
+        "logs",
+        "measurements",
+        "notes",
+        "photographs",
+        "records",
+        "revisions",
+        "scripts",
+        "sheets",
+        "tables",
+        "traces",
+        "versions",
+    ]
+    for sentence in split_sentences(text):
+        normalized = sentence.lower()
+        if has_unavailable_record_language(normalized):
+            continue
+        noun_count = sum(noun in normalized for noun in record_nouns)
+        if noun_count >= 2 and contains_any(
+            normalized,
+            ["available", "document", "record", "retain", "support", "versioned"],
+        ):
+            return True
+    return False
+
+
+def has_unavailable_record_language(text):
+    unavailable = re.search(
+        r"\b(?:unavailable|not available|cannot be produced|could not be produced|"
+        r"cannot be tied|could not be tied|not retained|not accessible|do not exist|"
+        r"does not exist|cannot be identified|could not be identified)\b",
+        text,
+    )
+    explicit_absence = re.search(
+        r"\bno\b[^.!?]{0,70}\b(?:commits?|data|datasets?|files?|logs?|notes?|"
+        r"records?|results?|traces?|versions?)\b",
+        text,
+    )
+    return bool(unavailable or explicit_absence)
+
+
 def contains_non_negated_phrase(text, phrases):
     for sentence in re.split(r"(?<=[.!?])\s+", " ".join(text.split())):
         normalized = sentence.lower()
+        if is_future_or_projected_statement(normalized):
+            continue
         unavailable_record = re.search(
             r"\b(?:files?|records?|logs?|notes?|commits?|versions?|matrices|data(?:sets?)?)\b"
             r"[^.!?]{0,80}\b(?:unavailable|not available|cannot be produced|could not be "
@@ -747,6 +1033,68 @@ def detect_consistency_issues(source_text):
             "message": (
                 "The source contains conflicting statements about the starting technology "
                 "or whether standard practice resolved the problem."
+            ),
+        })
+
+    if contains_any(
+        normalized,
+        [
+            "there was no scientific or technological uncertainty",
+            "there was no technological uncertainty",
+            "no scientific or technological uncertainty",
+            "no unresolved technological uncertainty",
+        ],
+    ) and contains_any(
+        normalized,
+        [
+            "no advancement",
+            "no experimental development",
+            "no technological advancement",
+            "standard analytics",
+            "standard system",
+            "vendor",
+        ],
+    ):
+        issues.append({
+            "lines": ["242", "244", "246"],
+            "message": (
+                "The source explicitly characterizes the work as routine and states that no "
+                "scientific or technological uncertainty or advancement was involved."
+            ),
+        })
+
+    if contains_any(
+        normalized,
+        [
+            "based only on an employee's recollection",
+            "based only on employee recollection",
+            "based only on recollection",
+            "result cannot be verified",
+            "result could not be verified",
+        ],
+    ):
+        issues.append({
+            "lines": ["244", "246"],
+            "message": (
+                "A material result or conclusion is based on recollection or cannot be "
+                "verified against a contemporaneous record."
+            ),
+        })
+
+    if contains_any(
+        normalized,
+        [
+            "no hypothesis, experiment, analysis",
+            "no experimental investigation was performed",
+            "no technological investigation was performed",
+            "only deployed that completed method",
+        ],
+    ):
+        issues.append({
+            "lines": ["242", "244", "246"],
+            "message": (
+                "The source states that the claimed year contained implementation or "
+                "monitoring rather than scientific or technological investigation."
             ),
         })
 

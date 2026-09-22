@@ -31,6 +31,7 @@ data/
   test_examples.csv
 benchmarks/
   BENCHMARK_FINDINGS.md
+  t661_adversarial_benchmark.json
   t661_capability_benchmark.json
   t661_holdout_benchmark.json
 src/
@@ -39,6 +40,8 @@ src/
   analysis_engine.py
   case_store.py
   case_manager.py
+  evidence_agent.py
+  grounding.py
   technical_report.py
   train_sred_classifier.py
   run_tests.py
@@ -136,11 +139,25 @@ Before drafting the T661 lines, the agent adds a drafting strategy and rationale
 
 When the agent decides that splitting is clearer, the T661 draft itself is sectioned with labels such as `TU1`, `TU2`, `SIS1`, and `SIS2` inside lines 242, 244, and 246 so the submitted technical narrative can separate overlapping uncertainties and investigations.
 
-## Run A Local AI Capability Test
+## Run The Evidence-First Report Agent
 
-The optional LLM report agent combines the existing local classifier, CRA checks,
-evidence mapping, and strategy planner with an OpenAI reasoning pass. It runs from
-your Mac and saves an editable Markdown report; no website or hosting is required.
+The optional OpenAI path is the main semantic report agent. It combines the local
+classifier and deterministic safeguards with two separate model stages:
+
+1. Evidence extraction creates typed technical streams and exact source-quote-backed
+   evidence items. Each item records certainty, claimed/prior/future timing, and whether
+   the work belongs to the claimant, a claimant-directed contractor, or a third party.
+2. A local readiness gate checks every stream against the evidence needed for Lines
+   242, 244, and 246. It blocks contradictory, future, unattributed, routine, or
+   incomplete evidence and generates targeted questions instead of a partial report.
+3. Grounded drafting runs only after every line passes. The model must cite evidence
+   IDs for each line, cover every required category, and stay within T661 word limits.
+4. A local post-draft audit rejects unknown evidence IDs, missing category support,
+   over-limit prose, and numeric facts not present in the client source.
+
+The command runs from your Mac and saves an editable Markdown report containing the
+evidence ledger, readiness decision, TU/SIS structure rationale, questions or draft,
+and the support IDs used for each drafted line. No website or hosting is required.
 
 Install the updated requirements and pass a UTF-8 text or Markdown project description:
 
@@ -166,6 +183,13 @@ The default model is `gpt-5.6-terra`. Override it for a comparison without chang
 OPENAI_MODEL="gpt-5.6-sol" venv/bin/python src/llm_report_agent.py /path/to/project.txt --show
 ```
 
+Reasoning effort defaults to `high` and can be changed for a cost/quality comparison:
+
+```bash
+venv/bin/python src/llm_report_agent.py /path/to/project.txt \
+  --reasoning-effort medium --show
+```
+
 To confirm that the local classifier and report preparation work without making a paid
 API request:
 
@@ -173,9 +197,11 @@ API request:
 venv/bin/python src/llm_report_agent.py /path/to/project.txt --dry-run
 ```
 
-The AI output is constrained to structured fields, checked against the official T661
-word limits, scanned for measurements that do not appear in the supplied source, and
-clearly marked as a draft requiring human verification.
+The model calls use strict structured outputs. Source text is treated as untrusted
+client evidence, so instructions embedded inside it do not override the agent. Exact
+quote validation and numeric grounding are deterministic local checks. These controls
+reduce unsupported drafting; they cannot verify whether the client's statement or
+record is true. Human technical and tax review is mandatory.
 
 ## Test An Incomplete Client Intake
 
@@ -198,14 +224,17 @@ request.
 
 ## Run The T661 Capability Benchmarks
 
-The repository includes two offline benchmark sets covering complete, incomplete,
-routine, contradictory, negated, qualitative, multi-stream, unstructured, and
-prompt-injection cases:
+The repository includes three offline benchmark sets covering complete, incomplete,
+routine, contradictory, negated, qualitative, multi-stream, unstructured,
+prompt-injection, failed-project, future-work, attribution, tax-year, recollection,
+and analysis-without-physical-prototype cases:
 
 ```bash
 venv/bin/python src/run_capability_benchmark.py
 venv/bin/python src/run_capability_benchmark.py \
   benchmarks/t661_holdout_benchmark.json
+venv/bin/python src/run_capability_benchmark.py \
+  benchmarks/t661_adversarial_benchmark.json
 ```
 
 The normal test runner executes both sets as regression checks. The cases test the
@@ -238,7 +267,8 @@ Case manager checks: PASS
 Technical report generator checks: PASS
 T661 project description checks: PASS
 Report strategy planner checks: PASS
-T661 capability benchmark: 18/18
+Semantic evidence-agent checks: PASS
+T661 capability benchmark: 29/29
 Incomplete intake gaps detected: 10/10
 Incomplete intake T661 drafts generated: 0
 Complete questionnaire T661 drafting: PASS
@@ -250,13 +280,17 @@ sets. They are regression signals, not estimates of production accuracy. Real,
 independently labelled project records and analyst review are still required before
 treating the analyzer as reliable.
 
-## Next Improvements
+## Known Limits And Next Validation
 
-- add more challenging `borderline` and `needs_more_info` tests
-- separate data validation into a reusable module or test file
-- add analyst-facing examples and confidence interpretation
-- add case export formats for analyst handoff
-- improve T661 line 242/244/246 wording through real case testing
-- improve report strategy planning with more domains and examples
+- The semantic path requires an OpenAI API key and makes one extraction call plus a
+  second drafting call only when the evidence gate passes.
+- Offline benchmarks are synthetic regression tests, not production accuracy or an
+  eligibility opinion.
+- Exact quotes prove only that a statement appeared in the supplied source. They do
+  not authenticate records, dates, measurements, authorship, or client claims.
+- The next meaningful evaluation is a blinded set of de-identified real projects,
+  independently reviewed by experienced SR&ED practitioners. Measure false-ready
+  rate, false-block rate, unsupported-fact rate, stream quality, question usefulness,
+  and reviewer agreement before packaging this as a client-facing product.
 - consider a small Streamlit interface for guided review
 - document model limitations and human review requirements

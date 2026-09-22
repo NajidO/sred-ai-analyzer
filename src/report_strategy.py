@@ -9,13 +9,14 @@ STREAM_DEFINITIONS = [
             "spot size",
             "resolution",
             "focusing",
-            "objective",
             "pole-piece",
             "pole piece",
             "lens",
             "aperture",
             "aberration",
         ],
+        "anchors": ["electron", "beam", "pole-piece", "pole piece", "aperture"],
+        "minimum_terms": 2,
         "uncertainty": (
             "Whether the shortened electron-optical geometry could maintain the "
             "required beam spot size, focusing repeatability, and useful imaging resolution."
@@ -52,6 +53,8 @@ STREAM_DEFINITIONS = [
             "beam displacement",
             "stabilization",
         ],
+        "anchors": ["thermal", "temperature", "drift", "hysteresis", "compensation"],
+        "minimum_terms": 3,
         "uncertainty": (
             "Whether thermal state, magnetic history, and software compensation could control "
             "focus shift and image drift within the compact architecture."
@@ -90,6 +93,8 @@ STREAM_DEFINITIONS = [
             "low beam current",
             "charging",
         ],
+        "anchors": ["detector", "secondary-electron", "snr", "bias", "shielding"],
+        "minimum_terms": 2,
         "uncertainty": (
             "Whether detector geometry, biasing, and shielding could improve signal collection "
             "without disturbing the beam near the sample."
@@ -145,6 +150,17 @@ STREAM_DEFINITIONS = [
             "sequence",
             "temporal",
         ],
+        "anchors": [
+            "algorithm",
+            "api timeout",
+            "classifier",
+            "database",
+            "machine learning",
+            "ml model",
+            "queue",
+            "software",
+        ],
+        "minimum_terms": 2,
         "uncertainty": (
             "Whether software, data-processing, or algorithmic methods could meet the required "
             "performance, accuracy, reliability, or scalability target."
@@ -195,7 +211,7 @@ def identify_streams(source_text, source_sections):
             source_sections,
         )
 
-        if evidence["score"] >= 2:
+        if definition_matches(definition, evidence):
             streams.append({
                 "id": definition["id"],
                 "title": definition["title"],
@@ -233,6 +249,13 @@ def identify_streams(source_text, source_sections):
         )
 
     return streams
+
+
+def definition_matches(definition, evidence):
+    terms = set(evidence["terms"])
+    anchors = definition.get("anchors", [])
+    minimum_terms = definition.get("minimum_terms", 2)
+    return len(terms) >= minimum_terms and any(anchor in terms for anchor in anchors)
 
 
 def collect_keyword_evidence(keywords, normalized_text, source_sections):
@@ -336,7 +359,14 @@ def extract_uncertainty_clauses(source_text, source_sections):
             if not is_remaining_uncertainty_statement(sentence)
         ]
         if any(term in title for term in uncertainty_title_terms):
-            candidate_sentences.extend(section_sentences)
+            explicit_uncertainty_sentences = [
+                sentence
+                for sentence in section_sentences
+                if contains_uncertainty_language(sentence)
+            ]
+            candidate_sentences.extend(
+                explicit_uncertainty_sentences or section_sentences
+            )
         else:
             candidate_sentences.extend(
                 sentence
@@ -357,12 +387,37 @@ def extract_uncertainty_clauses(source_text, source_sections):
     for sentence in candidate_sentences:
         whether_match = re.search(r"\bwhether\s+(.+)", sentence, re.IGNORECASE)
         if not whether_match:
+            relationship_match = re.search(
+                r"\bbetween\s+(.+?),\s+and\s+between\s+(.+)",
+                sentence,
+                re.IGNORECASE,
+            )
+            if relationship_match:
+                clauses.extend([
+                    f"Unknown relationship between {relationship_match.group(1).strip()}",
+                    f"Unknown relationship between {relationship_match.group(2).strip()}",
+                ])
+                continue
             clauses.append(sentence.strip())
             continue
 
         whether_text = whether_match.group(1).strip()
         parts = re.split(r"\s+(?:or|and)\s+whether\s+", whether_text, flags=re.IGNORECASE)
         clauses.extend(f"Whether {part.strip()}" for part in parts if part.strip())
+
+        if len(parts) == 1 and re.search(r",\s+and\s+between\s+", whether_text, re.IGNORECASE):
+            clauses.pop()
+            relationship_parts = re.split(
+                r",\s+and\s+between\s+",
+                whether_text,
+                maxsplit=1,
+                flags=re.IGNORECASE,
+            )
+            clauses.extend(
+                f"Unknown relationship between {part.strip()}"
+                for part in relationship_parts
+                if part.strip()
+            )
 
     return unique_items(clauses)
 

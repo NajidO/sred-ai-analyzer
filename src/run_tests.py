@@ -13,14 +13,17 @@ from capability_eval import evaluate_expected_gaps
 from case_manager import build_resumed_description, inspect_case, list_cases, resume_case
 from cra_guideline_checker import check_against_cra_guidelines
 from evidence_mapper import map_to_sred_framework
+from evidence_agent import assess_evidence_graph, normalize_evidence_graph
 from explanation import generate_label_explanation
 from intake_agent import build_updated_description, select_intake_questions
 from llm_report_agent import (
     build_local_context,
     build_model_input,
     find_new_measurements,
+    normalize_grounded_draft,
     normalize_report_payload,
     render_llm_report,
+    request_llm_report,
 )
 from case_store import (
     list_case_files,
@@ -54,6 +57,7 @@ VALID_LABELS = {"routine", "borderline", "needs_more_info", "strong_sred"}
 BENCHMARK_PATHS = [
     BASE_DIR / "benchmarks" / "t661_capability_benchmark.json",
     BASE_DIR / "benchmarks" / "t661_holdout_benchmark.json",
+    BASE_DIR / "benchmarks" / "t661_adversarial_benchmark.json",
 ]
 
 
@@ -857,6 +861,321 @@ def validate_llm_report_agent_layer():
     print("PASS: enforced the local evidence gate over an AI drafting attempt")
 
 
+def build_semantic_evidence_fixture():
+    source_text = "\n".join([
+        "The team sought a controller that held vibration below 2 mm/s.",
+        "At the start, the existing fixed-gain controller reached 8 mm/s.",
+        "Published gain-tuning methods assumed a constant load and could not predict the changing-load response.",
+        "It was unknown whether a load-state observer could preserve stability as the load changed.",
+        "The team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop.",
+        "During 2025, engineers tested four bandwidth schedules under three changing-load profiles.",
+        "The selected schedule reached 1.8 mm/s, while the fastest schedule became unstable.",
+        "The team concluded that observer bandwidth had to decrease as estimated load inertia increased.",
+        "The work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.",
+        "Dated test logs, controller versions, vibration traces, and decision notes record the investigation.",
+    ])
+    evidence = [
+        ("o1", "objective", "The team sought a controller that held vibration below 2 mm/s.", "The objective was to hold vibration below 2 mm/s."),
+        ("k1", "existing_knowledge", "At the start, the existing fixed-gain controller reached 8 mm/s.", "The existing fixed-gain controller reached 8 mm/s."),
+        ("sp1", "standard_practice_limit", "Published gain-tuning methods assumed a constant load and could not predict the changing-load response.", "Published gain-tuning methods could not predict the changing-load response."),
+        ("u1", "uncertainty", "It was unknown whether a load-state observer could preserve stability as the load changed.", "It was unknown whether a load-state observer could preserve stability under changing load."),
+        ("h1", "hypothesis", "The team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop.", "The hypothesis linked load-state bandwidth scheduling to vibration and stability."),
+        ("x1", "experiment_or_analysis", "During 2025, engineers tested four bandwidth schedules under three changing-load profiles.", "Engineers tested four schedules under three profiles during 2025."),
+        ("r1", "result", "The selected schedule reached 1.8 mm/s, while the fastest schedule became unstable.", "The selected schedule reached 1.8 mm/s and the fastest was unstable."),
+        ("c1", "conclusion", "The team concluded that observer bandwidth had to decrease as estimated load inertia increased.", "The team concluded that bandwidth had to decrease as estimated inertia increased."),
+        ("a1", "advancement", "The work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.", "The work established a relationship among load inertia, observer bandwidth, and stability."),
+        ("d1", "supporting_record", "Dated test logs, controller versions, vibration traces, and decision notes record the investigation.", "Dated technical records support the investigation."),
+    ]
+    payload = {
+        "project_summary": "A changing-load vibration-control investigation.",
+        "claimed_tax_year": "2025",
+        "claimed_tax_year_source_quote": (
+            "During 2025, engineers tested four bandwidth schedules under three changing-load profiles."
+        ),
+        "technical_streams": [
+            {
+                "id": "control_stream",
+                "title": "Changing-load observer stability",
+                "objective": "Hold vibration below 2 mm/s as load changes.",
+                "relationship_to_other_streams": "Single technical stream.",
+            }
+        ],
+        "evidence_items": [
+            {
+                "id": item_id,
+                "stream_id": "control_stream",
+                "category": category,
+                "source_quote": quote,
+                "source_location": f"fixture:{index}",
+                "normalized_fact": fact,
+                "certainty": "explicit",
+                "tax_year_scope": "claimed_year",
+                "attribution": "claimant",
+            }
+            for index, (item_id, category, quote, fact) in enumerate(evidence, start=1)
+        ],
+        "contradictions": [],
+        "routine_work": [],
+        "attribution_issues": [],
+        "extraction_notes": [],
+    }
+    return source_text, payload
+
+
+def build_grounded_draft_fixture():
+    return {
+        "overall_assessment": "The validated record supports a technical uncertainty, systematic investigation, and attempted advancement.",
+        "structure_mode": "integrated_narrative",
+        "structure_rationale": "One hypothesis and investigation address one uncertainty.",
+        "line_242": "The team sought to control vibration under changing load. Fixed-gain control and published constant-load tuning did not predict the response, leaving uncertainty about whether a load-state observer could preserve stability.",
+        "line_244": "The team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop. During 2025, engineers tested four schedules under three changing-load profiles. The selected schedule reached 1.8 mm/s, while the fastest schedule became unstable. The team concluded that bandwidth had to decrease as estimated load inertia increased.",
+        "line_246": "The work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.",
+        "draft_support": [
+            {
+                "line_number": "242",
+                "evidence_ids": ["E1", "E2", "E3", "E4"],
+                "coverage_note": "Covers the objective, starting knowledge, standard-practice limit, and uncertainty.",
+            },
+            {
+                "line_number": "244",
+                "evidence_ids": ["E5", "E6", "E7", "E8", "E10"],
+                "coverage_note": "Covers the hypothesis, work, result, conclusion, and records.",
+            },
+            {
+                "line_number": "246",
+                "evidence_ids": ["E9"],
+                "coverage_note": "Covers the technological knowledge established.",
+            },
+        ],
+        "factual_risks": [],
+        "review_notes": ["Verify technical terminology with the project lead."],
+    }
+
+
+def validate_semantic_evidence_agent_layer():
+    source_text, raw_graph = build_semantic_evidence_fixture()
+    graph = normalize_evidence_graph(raw_graph, source_text)
+    readiness = assess_evidence_graph(graph)
+
+    if graph["validation"]["accepted_evidence_items"] != 10:
+        raise AssertionError("The evidence validator rejected a supported fixture item.")
+    if not readiness["can_draft"]:
+        raise AssertionError("A complete validated evidence graph was not draft-ready.")
+
+    prior_knowledge = json.loads(json.dumps(raw_graph))
+    prior_knowledge["evidence_items"][1]["tax_year_scope"] = "prior_year"
+    prior_knowledge["evidence_items"][1]["attribution"] = "third_party"
+    if not assess_evidence_graph(
+        normalize_evidence_graph(prior_knowledge, source_text)
+    )["can_draft"]:
+        raise AssertionError("Prior-year starting knowledge did not support Line 242.")
+
+    fabricated = json.loads(json.dumps(raw_graph))
+    fabricated["evidence_items"][0]["source_quote"] = "A fabricated source sentence."
+    fabricated_graph = normalize_evidence_graph(fabricated, source_text)
+    if fabricated_graph["validation"]["rejected_evidence_items"] != 1:
+        raise AssertionError("A fabricated source quote was not rejected.")
+    if assess_evidence_graph(fabricated_graph)["can_draft"]:
+        raise AssertionError("A graph missing a rejected objective was marked draft-ready.")
+
+    invented_number = json.loads(json.dumps(raw_graph))
+    invented_number["evidence_items"][0]["normalized_fact"] = (
+        "The objective was to hold vibration below 0.5 mm/s."
+    )
+    numeric_graph = normalize_evidence_graph(invented_number, source_text)
+    if numeric_graph["validation"]["rejected_evidence_items"] != 1:
+        raise AssertionError("Unsupported numeric content in a normalized fact was accepted.")
+
+    inferred_advancement = json.loads(json.dumps(raw_graph))
+    inferred_advancement["evidence_items"][8]["certainty"] = "inferred"
+    inferred_readiness = assess_evidence_graph(
+        normalize_evidence_graph(inferred_advancement, source_text)
+    )
+    if inferred_readiness["sections"]["246"]["status"] != "needs_more_information":
+        raise AssertionError("Inferred advancement satisfied the explicit evidence gate.")
+
+    global_result = json.loads(json.dumps(raw_graph))
+    global_result["evidence_items"][6]["stream_id"] = "GLOBAL"
+    global_graph = normalize_evidence_graph(global_result, source_text)
+    if global_graph["validation"]["rejected_evidence_items"] != 1:
+        raise AssertionError("Stream-specific result evidence was accepted as GLOBAL.")
+    if assess_evidence_graph(global_graph)["sections"]["244"]["status"] == "ready":
+        raise AssertionError("A rejected GLOBAL result still satisfied Line 244.")
+
+    future_work = json.loads(json.dumps(raw_graph))
+    future_work["evidence_items"][5]["tax_year_scope"] = "future"
+    future_readiness = assess_evidence_graph(
+        normalize_evidence_graph(future_work, source_text)
+    )
+    if future_readiness["sections"]["244"]["status"] != "needs_more_information":
+        raise AssertionError("Future work satisfied the claimed-year Line 244 gate.")
+    questions = " ".join(
+        item["question"] for item in future_readiness["follow_up_questions"]
+    )
+    if "actually performed" not in questions:
+        raise AssertionError("A missing claimed-year investigation produced no specific question.")
+
+    third_party_work = json.loads(json.dumps(raw_graph))
+    third_party_work["evidence_items"][5]["attribution"] = "third_party"
+    third_party_readiness = assess_evidence_graph(
+        normalize_evidence_graph(third_party_work, source_text)
+    )
+    if third_party_readiness["sections"]["244"]["status"] != "needs_more_information":
+        raise AssertionError("Third-party work was attributed to the claimant.")
+    attribution_questions = " ".join(
+        item["question"] for item in third_party_readiness["follow_up_questions"]
+    )
+    if "Who performed and directed" not in attribution_questions:
+        raise AssertionError("Unattributed work produced no responsibility question.")
+
+    contradicted = json.loads(json.dumps(raw_graph))
+    contradicted["contradictions"] = [
+        {
+            "id": "conflict_1",
+            "evidence_ids": ["u1", "sp1"],
+            "description": "The uncertainty and standard-practice account conflict.",
+            "blocks_lines": ["242"],
+        }
+    ]
+    contradiction_readiness = assess_evidence_graph(
+        normalize_evidence_graph(contradicted, source_text)
+    )
+    if contradiction_readiness["sections"]["242"]["status"] != "needs_more_information":
+        raise AssertionError("A material contradiction did not block its T661 line.")
+
+    draft_payload = build_grounded_draft_fixture()
+    report = normalize_grounded_draft(
+        draft_payload,
+        source_text,
+        graph,
+        readiness,
+    )
+    if report["drafting_decision"] != "draft_ready" or len(report["draft_support"]) != 3:
+        raise AssertionError("A supported grounded draft did not pass the post-draft audit.")
+
+    unsupported_draft = json.loads(json.dumps(draft_payload))
+    unsupported_draft["line_246"] += " The final error was 0.2%."
+    try:
+        normalize_grounded_draft(
+            unsupported_draft,
+            source_text,
+            graph,
+            readiness,
+        )
+    except ValueError as exc:
+        if "numeric content" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft with an unsupported numeric fact passed the audit.")
+
+    incomplete_support = json.loads(json.dumps(draft_payload))
+    incomplete_support["draft_support"][1]["evidence_ids"].remove("E7")
+    try:
+        normalize_grounded_draft(
+            incomplete_support,
+            source_text,
+            graph,
+            readiness,
+        )
+    except ValueError as exc:
+        if "result evidence" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft support map missing result evidence passed the audit.")
+
+    class FakeUsage:
+        input_tokens = 40
+        output_tokens = 20
+        total_tokens = 60
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.output_text = json.dumps(payload)
+            self.usage = FakeUsage()
+
+    class FakeResponses:
+        def __init__(self, payloads):
+            self.payloads = list(payloads)
+            self.requests = []
+
+        def create(self, **request):
+            self.requests.append(request)
+            return FakeResponse(self.payloads.pop(0))
+
+    class FakeClient:
+        def __init__(self, payloads):
+            self.responses = FakeResponses(payloads)
+
+    fake_client = FakeClient([raw_graph, draft_payload])
+    context = {
+        "project_source": source_text,
+        "local_analysis": {"prediction": "borderline"},
+        "local_strategy": {"streams": []},
+        "t661_evidence_assessment": {
+            "routine_flags": [],
+            "consistency_issues": [],
+        },
+    }
+    end_to_end_report, usage = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=fake_client,
+    )
+    if end_to_end_report["drafting_decision"] != "draft_ready":
+        raise AssertionError("The mocked two-stage agent did not return a grounded draft.")
+    if len(fake_client.responses.requests) != 2:
+        raise AssertionError("The agent did not execute separate extraction and drafting stages.")
+    if usage["total_tokens"] != 120:
+        raise AssertionError("Two-stage token usage was not combined.")
+
+    blocked_graph = json.loads(json.dumps(raw_graph))
+    blocked_graph["evidence_items"] = [
+        item
+        for item in blocked_graph["evidence_items"]
+        if item["category"] != "advancement"
+    ]
+    blocked_client = FakeClient([blocked_graph])
+    blocked_report, blocked_usage = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=blocked_client,
+    )
+    if blocked_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("Incomplete extracted evidence reached the drafting stage.")
+    if len(blocked_client.responses.requests) != 1:
+        raise AssertionError("The agent called the drafting model after a blocked gate.")
+    if blocked_usage["total_tokens"] != 60:
+        raise AssertionError("Blocked extraction usage was not reported correctly.")
+
+    audit_client = FakeClient([raw_graph, unsupported_draft])
+    audited_report, _ = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=audit_client,
+    )
+    if audited_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("A failed post-draft audit returned T661 prose.")
+    if audited_report["t661_lines"]:
+        raise AssertionError("A failed post-draft audit retained partial T661 prose.")
+    if audited_report["draft_audit"]["status"] != "failed":
+        raise AssertionError("A post-draft grounding failure was not exposed in the report.")
+
+    print("\nSemantic evidence agent checks")
+    print("=" * 80)
+    print("PASS: validated exact source quotes and rejected fabricated evidence")
+    print("PASS: rejected unsupported normalized and drafted numeric facts")
+    print("PASS: excluded inferred claims and rejected stream-specific GLOBAL evidence")
+    print("PASS: excluded future work from the claimed-year evidence gate")
+    print("PASS: accepted prior-year starting knowledge but rejected third-party work")
+    print("PASS: blocked material contradictions and asked stream-specific questions")
+    print("PASS: enforced complete evidence-ID support for every drafted line")
+    print("PASS: executed mocked extraction, readiness, drafting, and audit stages")
+    print("PASS: skipped drafting when blocked and withheld prose after audit failure")
+
+
 def validate_incomplete_intake_capability(model):
     source_path = BASE_DIR / "examples" / "incomplete_sem_client_draft.md"
     expected_path = BASE_DIR / "examples" / "incomplete_sem_expected_gaps.json"
@@ -892,8 +1211,8 @@ def validate_incomplete_intake_capability(model):
     if t661:
         raise AssertionError("Incomplete intake produced a partial T661 report.")
 
-    if set(evidence_assessment["blocked_lines"]) != {"242", "244", "246"}:
-        raise AssertionError("Incomplete intake did not block all incomplete T661 lines.")
+    if "244" not in evidence_assessment["blocked_lines"]:
+        raise AssertionError("Incomplete intake did not block Line 244 evidence gaps.")
 
     line_244_questions = " ".join(
         question
@@ -956,7 +1275,7 @@ def validate_incomplete_intake_capability(model):
     )
     print("PASS: selected and preserved TU1/TU2/TU3 structure")
     print("PASS: generated grounded stream-specific follow-up questions")
-    print("PASS: blocked Lines 242, 244, and 246 when evidence was incomplete")
+    print("PASS: blocked all T661 drafting when a required line remained incomplete")
     print("PASS: generated no partial T661 report")
     print("PASS: assessed incomplete unstructured client narratives")
 
@@ -1083,5 +1402,6 @@ validate_technical_report_layer(model)
 validate_t661_questionnaire_drafting(model)
 validate_report_strategy_layer(model)
 validate_llm_report_agent_layer()
+validate_semantic_evidence_agent_layer()
 validate_incomplete_intake_capability(model)
 validate_t661_capability_benchmarks(model)

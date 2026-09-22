@@ -27,6 +27,7 @@ T661_LINE_TITLES = {
     ),
 }
 QUESTION_HEADING_PATTERN = re.compile(r"^##\s+(\d+)\.\s*(.+?)\s*$")
+MARKDOWN_HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+?)\s*$")
 SENTENCE_PATTERN = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9])")
 
 
@@ -1217,6 +1218,13 @@ def append_t661_evidence_assessment(lines, assessment):
         else:
             lines.append("- No blocking omissions detected by the local evidence checks.")
 
+        if section.get("advisory_information"):
+            lines.extend(["", "#### Recommended clarifications", ""])
+            lines.extend(
+                f"- {item}"
+                for item in section["advisory_information"]
+            )
+
         for stream in section["stream_assessments"]:
             lines.extend([
                 "",
@@ -1315,7 +1323,93 @@ def extract_questionnaire_sections(text):
             "text": "\n".join(current_lines).strip(),
         }
 
+    if sections:
+        return sections
+
+    return extract_semantic_markdown_sections(text)
+
+
+def extract_semantic_markdown_sections(text):
+    raw_sections = []
+    current_title = ""
+    current_lines = []
+
+    for line in text.splitlines():
+        match = MARKDOWN_HEADING_PATTERN.match(line.strip())
+        if match:
+            if current_title:
+                raw_sections.append({
+                    "title": current_title,
+                    "text": "\n".join(current_lines).strip(),
+                })
+            current_title = match.group(1).strip()
+            current_lines = []
+        elif current_title:
+            current_lines.append(line)
+
+    if current_title:
+        raw_sections.append({
+            "title": current_title,
+            "text": "\n".join(current_lines).strip(),
+        })
+
+    if not raw_sections:
+        return {}
+
+    sections = {}
+    for section in raw_sections:
+        preferred_number, number_range = infer_semantic_section_number(section["title"])
+        number = first_available_section_number(
+            sections,
+            preferred_number,
+            number_range,
+        )
+        sections[number] = section
+
     return sections
+
+
+def infer_semantic_section_number(title):
+    normalized = title.lower()
+    if any(term in normalized for term in ["existing", "knowledge base", "starting"]):
+        return 2, range(1, 5)
+
+    mappings = [
+        (16, range(13, 17), ["remaining", "unresolved", "open boundary", "year-end"]),
+        (15, range(13, 17), ["failed work", "failed learning"]),
+        (14, range(13, 17), ["advancement", "boundary", "capability", "measured result"]),
+        (13, range(13, 17), ["conclusion", "finding", "knowledge", "learning"]),
+        (11, range(5, 13), ["evidence", "record", "documentation"]),
+        (9, range(5, 13), ["pivot", "decision", "changed next", "further"]),
+        (6, range(5, 13), [
+            "analysis", "experiment", "investigation", "simulation", "test", "trial", "work"
+        ]),
+        (5, range(5, 13), ["hypoth", "theory", "expected result"]),
+        (4, range(1, 5), ["available knowledge", "limitation", "standard", "fell short"]),
+        (3, range(1, 5), ["challenge", "hard technical", "problem", "uncertaint", "unknown"]),
+        (2, range(1, 5), ["background", "existing", "knowledge base", "starting"]),
+        (1, range(1, 5), ["goal", "objective", "target"]),
+    ]
+
+    for preferred_number, number_range, terms in mappings:
+        if any(term in normalized for term in terms):
+            return preferred_number, number_range
+
+    return 1, range(1, 17)
+
+
+def first_available_section_number(sections, preferred_number, number_range):
+    if preferred_number not in sections:
+        return preferred_number
+
+    for number in number_range:
+        if number not in sections:
+            return number
+
+    number = max(sections, default=0) + 1
+    while number in sections:
+        number += 1
+    return number
 
 
 def get_relevant_paragraphs(

@@ -39,13 +39,21 @@ qualitative outcomes, routine vendor configuration, contradictions, negated reco
 format variation, multiple uncertainty streams, and an instruction embedded in
 client text that attempts to bypass the evidence gate.
 
-The seven-case holdout was written before the generalization fixes and run once
+The seven-case holdout was written before the first generalization fixes and run once
 without tuning. It tested unseen robotic, ceramic, fluid-control, data-migration, and
 mixed-domain wording, plus fiscal-year contradictions and unavailable evidence.
 
+An additional 11-case adversarial set targets criteria that simple keyword gates often
+get wrong: attempted advancement in an unsuccessful project, one valid systematic
+analysis path, a precise qualitative objective, no remaining year-end uncertainty,
+future work presented as completed, a commercial A/B test, implementation-only work
+in the claimed year, an unverified remembered result, an implicit two-stream project,
+vendor work attributed to the claimant, and simulation analysis without a physical
+prototype. Its baseline was recorded before the fixes described below.
+
 Each case asserts the expected draft decision, blocked and ready T661 lines, minimum
-stream count, optional classifier label range, and whether a draft invents a
-measurement not found in the source.
+and sometimes maximum stream count, prohibited stream titles, optional classifier
+label range, and whether a draft invents a measurement not found in the source.
 
 ## Results
 
@@ -53,11 +61,12 @@ measurement not found in the source.
 | --- | ---: | ---: |
 | Tuning benchmark | 4/11 (36%) | 11/11 (100%) |
 | Originally untouched holdout | 4/7 (57%) | 7/7 (100%) |
-| Combined current regression set | 8/18 (44%) | 18/18 (100%) |
+| Adversarial evidence benchmark | 4/11 (36%) | 11/11 (100%) |
+| Combined current regression set | 12/29 (41%) | 29/29 (100%) |
 | Classifier examples | Not changed | 26/26 (100%) |
 
 The current scores show that the named failures are covered by regression tests. They
-do not show 100% real-world accuracy because all 18 capability cases are synthetic,
+do not show 100% real-world accuracy because all 29 capability cases are synthetic,
 the post-fix holdout is no longer independent, and the classifier test set has only 26
 examples.
 
@@ -79,6 +88,17 @@ examples.
    separate technical uncertainty stream.
 8. Percent measurements were missed because the measurement regular expression used
    a word boundary after the percent sign.
+9. Alternatives, a failed path, a quantified objective, and unresolved year-end work
+   were treated as mandatory even though a source can support the T661 lines without
+   every one of those narrative details.
+10. Future plans and earlier-year investigations could satisfy the work gate when the
+    prose contained experimental vocabulary.
+11. Vendor experiments and unverified recollections could be mistaken for claimant
+    evidence.
+12. Valid mathematical or simulation analysis could be blocked because no physical
+    test was described.
+13. Broad domain keywords could create extra technical streams unrelated to the
+    source-defined uncertainty.
 
 ## Changes Made
 
@@ -90,24 +110,54 @@ examples.
 - Added a narrow routine-work guardrail for documented vendor or standard
   configuration that resolved the stated objective.
 - Fixed percent and measured-outcome recognition.
-- Added machine-readable benchmark results and made both benchmark files part of the
-  normal test suite.
+- Separated blocking evidence requirements from useful but advisory detail. A precise
+  qualitative objective, one systematic hypothesis path, advancement attempted through
+  failed work, and a completed project with no remaining uncertainty can now pass when
+  their required evidence is present.
+- Excluded future plans from completed work, added claimed-year implementation and
+  recollection conflicts, and recognized systematic analysis without requiring a
+  physical prototype.
+- Tightened domain stream anchors, added semantic Markdown heading parsing, and split
+  implicit linked uncertainties expressed as separate relationships.
+- Added maximum-stream and prohibited-title assertions so a passing benchmark cannot
+  hide unrelated extra streams.
+- Added the adversarial benchmark and made all three benchmark files part of the normal
+  test suite.
+
+## Semantic Agent Safeguards
+
+The optional OpenAI path now uses a separate strict evidence-extraction schema before
+drafting. Every accepted item must contain an exact source quote and records its
+certainty, tax-year scope, technical stream, category, and attribution. Local code
+rejects fabricated quotes, unsupported normalized numbers, stream-specific evidence
+assigned globally, obvious claimed-year conflicts, and third-party or unclear work as
+support for claimant investigation.
+
+The local readiness gate requires objective, starting knowledge, standard-practice
+limit, and uncertainty evidence for Line 242; hypothesis, claimed-year investigation,
+result, conclusion, and supporting-record evidence for Line 244; and claimed-year
+advancement evidence for Line 246. Drafting occurs in a second model call only after
+all streams pass. A post-draft audit requires evidence IDs for every category and
+stream, checks word limits, and withholds all prose if it finds an unsupported numeric
+fact. Mocked end-to-end tests exercise these stages without making a paid API call.
 
 ## Remaining Limits
 
-- The local path is a sklearn classifier plus deterministic rules. It does not reason
-  like the optional OpenAI report agent, and this benchmark did not make an API call.
+- The benchmark score covers the sklearn and deterministic local path. Semantic-agent
+  tests use controlled mock model responses and do not establish real-model accuracy.
 - The checks infer evidence from language. They cannot verify that a test, measurement,
   date, record, or technical conclusion is true.
 - Contradiction and negation handling remains pattern-based and can miss novel
   paraphrases, cross-document conflicts, tables, attachments, and implied chronology.
-- Stream extraction is lexical. Closely related uncertainties may be split, and
-  distinct but similarly worded uncertainties may be merged.
+- Offline stream extraction remains partly lexical. The OpenAI path can organize
+  unfamiliar domains semantically, but model-created streams still require exact
+  supporting evidence and can be over-split or merged.
 - The test corpus has no independent CRA decisions or adjudicated real claims. It
   cannot measure precision, recall, or acceptance likelihood in production.
 - The suite does not yet cover multilingual intake, OCR errors, very long evidence
-  packages, multi-year continuations, contractor attribution, or conflicts across
-  multiple uploaded documents.
+  packages, multi-year continuations across several files, or conflicts across
+  multiple uploaded documents. Contractor and third-party attribution are covered at
+  a unit level but still need real-case validation.
 - Human technical and tax review remains mandatory. The tool should organize evidence,
   block unsupported drafting, and expose questions; it should not make the final
   eligibility decision.
