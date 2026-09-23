@@ -143,7 +143,8 @@ When the agent decides that splitting is clearer, the T661 draft itself is secti
 ## Run The Evidence-First Report Agent
 
 The optional OpenAI path is the main semantic report agent. It combines the local
-classifier and deterministic safeguards with two separate model stages:
+classifier and deterministic safeguards with three separate model stages when the
+evidence is complete:
 
 1. Evidence extraction creates typed technical streams and exact source-quote-backed
    evidence items. Each item records certainty, claimed/prior/future timing, and whether
@@ -152,13 +153,18 @@ classifier and deterministic safeguards with two separate model stages:
    242, 244, and 246. It blocks contradictory, future, unattributed, routine, or
    incomplete evidence and generates targeted questions instead of a partial report.
 3. Grounded drafting runs only after every line passes. The model must cite evidence
-   IDs for each line, cover every required category, and stay within T661 word limits.
-4. A local post-draft audit rejects unknown evidence IDs, missing category support,
-   over-limit prose, and numeric facts not present in the client source.
+   IDs for each line and for every sentence or standalone factual statement.
+4. A local post-draft audit rejects missing sentence maps, unknown or out-of-scope
+   evidence IDs, missing category support, over-limit prose, and numeric facts not
+   present in the client source.
+5. An independent grounding call checks every drafted claim against exactly its cited
+   evidence. Any ambiguous, unsupported, omitted, or incompletely reviewed claim causes
+   all T661 prose to be withheld.
 
 The command runs from your Mac and saves an editable Markdown report containing the
 evidence ledger, readiness decision, TU/SIS structure rationale, questions or draft,
-and the support IDs used for each drafted line. No website or hosting is required.
+the support IDs used for each drafted line and claim, and the independent audit result.
+No website or hosting is required.
 
 Install the updated requirements and pass a UTF-8 text or Markdown project description:
 
@@ -208,8 +214,9 @@ venv/bin/python src/llm_report_agent.py /path/to/project.txt --dry-run
 The model calls use strict structured outputs. Source text is treated as untrusted
 client evidence, so instructions embedded inside it do not override the agent. Exact
 quote validation and numeric grounding are deterministic local checks. These controls
-reduce unsupported drafting; they cannot verify whether the client's statement or
-record is true. Human technical and tax review is mandatory.
+reduce unsupported drafting, and the independent audit adds a second semantic check;
+they cannot verify whether the client's statement or record is true. Human technical
+and tax review is mandatory.
 
 ## Test An Incomplete Client Intake
 
@@ -245,7 +252,7 @@ venv/bin/python src/run_capability_benchmark.py \
   benchmarks/t661_adversarial_benchmark.json
 ```
 
-The normal test runner executes both sets as regression checks. The cases test the
+The normal test runner executes all three sets as regression checks. The cases test the
 local sklearn classifier, evidence gate, stream planner, and deterministic drafting
 controls. They do not call an OpenAI model and do not establish legal eligibility.
 See `benchmarks/BENCHMARK_FINDINGS.md` for the baseline failures, fixes, current
@@ -290,8 +297,9 @@ treating the analyzer as reliable.
 
 ## Known Limits And Next Validation
 
-- The semantic path requires an OpenAI API key and makes one extraction call plus a
-  second drafting call only when the evidence gate passes.
+- The semantic path requires an OpenAI API key. It makes one extraction call; when the
+  evidence gate passes it also makes a drafting call and an independent grounding-audit
+  call, increasing cost and latency in exchange for stricter claim-level support.
 - Offline benchmarks are synthetic regression tests, not production accuracy or an
   eligibility opinion.
 - Exact quotes prove only that a statement appeared in the supplied source. They do

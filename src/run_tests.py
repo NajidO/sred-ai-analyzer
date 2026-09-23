@@ -951,8 +951,76 @@ def build_grounded_draft_fixture():
                 "coverage_note": "Covers the technological knowledge established.",
             },
         ],
+        "claim_support": [
+            {
+                "claim_id": "C242_1",
+                "line_number": "242",
+                "claim_text": "The team sought to control vibration under changing load.",
+                "evidence_ids": ["E1"],
+            },
+            {
+                "claim_id": "C242_2",
+                "line_number": "242",
+                "claim_text": "Fixed-gain control and published constant-load tuning did not predict the response, leaving uncertainty about whether a load-state observer could preserve stability.",
+                "evidence_ids": ["E2", "E3", "E4"],
+            },
+            {
+                "claim_id": "C244_1",
+                "line_number": "244",
+                "claim_text": "The team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop.",
+                "evidence_ids": ["E5"],
+            },
+            {
+                "claim_id": "C244_2",
+                "line_number": "244",
+                "claim_text": "During 2025, engineers tested four schedules under three changing-load profiles.",
+                "evidence_ids": ["E6"],
+            },
+            {
+                "claim_id": "C244_3",
+                "line_number": "244",
+                "claim_text": "The selected schedule reached 1.8 mm/s, while the fastest schedule became unstable.",
+                "evidence_ids": ["E7"],
+            },
+            {
+                "claim_id": "C244_4",
+                "line_number": "244",
+                "claim_text": "The team concluded that bandwidth had to decrease as estimated load inertia increased.",
+                "evidence_ids": ["E8"],
+            },
+            {
+                "claim_id": "C246_1",
+                "line_number": "246",
+                "claim_text": "The work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.",
+                "evidence_ids": ["E9"],
+            },
+        ],
         "factual_risks": [],
         "review_notes": ["Verify technical terminology with the project lead."],
+    }
+
+
+def build_grounding_audit_fixture(draft_payload, rejected_claim_id=None):
+    claims = []
+    for claim in draft_payload["claim_support"]:
+        rejected = claim["claim_id"] == rejected_claim_id
+        claims.append({
+            "claim_id": claim["claim_id"],
+            "verdict": "unsupported" if rejected else "supported",
+            "reason": (
+                "The cited evidence does not establish every detail."
+                if rejected
+                else "The cited evidence supports the complete claim."
+            ),
+            "evidence_ids_reviewed": list(claim["evidence_ids"]),
+        })
+    return {
+        "overall_assessment": (
+            "One claim is unsupported."
+            if rejected_claim_id
+            else "Every drafted claim is supported by its cited evidence."
+        ),
+        "claims": claims,
     }
 
 
@@ -1059,6 +1127,12 @@ def validate_semantic_evidence_agent_layer():
 
     unsupported_draft = json.loads(json.dumps(draft_payload))
     unsupported_draft["line_246"] += " The final error was 0.2%."
+    unsupported_draft["claim_support"].append({
+        "claim_id": "C246_2",
+        "line_number": "246",
+        "claim_text": "The final error was 0.2%.",
+        "evidence_ids": ["E9"],
+    })
     try:
         normalize_grounded_draft(
             unsupported_draft,
@@ -1074,6 +1148,7 @@ def validate_semantic_evidence_agent_layer():
 
     incomplete_support = json.loads(json.dumps(draft_payload))
     incomplete_support["draft_support"][1]["evidence_ids"].remove("E7")
+    incomplete_support["claim_support"][4]["evidence_ids"] = ["E8"]
     try:
         normalize_grounded_draft(
             incomplete_support,
@@ -1086,6 +1161,36 @@ def validate_semantic_evidence_agent_layer():
             raise
     else:
         raise AssertionError("A draft support map missing result evidence passed the audit.")
+
+    missing_claim_support = json.loads(json.dumps(draft_payload))
+    missing_claim_support["claim_support"].pop()
+    try:
+        normalize_grounded_draft(
+            missing_claim_support,
+            source_text,
+            graph,
+            readiness,
+        )
+    except ValueError as exc:
+        if "map every sentence exactly once" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft with an uncited sentence passed the local audit.")
+
+    outside_line_support = json.loads(json.dumps(draft_payload))
+    outside_line_support["claim_support"][0]["evidence_ids"].append("E5")
+    try:
+        normalize_grounded_draft(
+            outside_line_support,
+            source_text,
+            graph,
+            readiness,
+        )
+    except ValueError as exc:
+        if "outside Line 242's support map" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A claim cited evidence outside its line support map.")
 
     class FakeUsage:
         input_tokens = 40
@@ -1110,11 +1215,16 @@ def validate_semantic_evidence_agent_layer():
         def __init__(self, payloads):
             self.responses = FakeResponses(payloads)
 
-    fake_client = FakeClient([raw_graph, draft_payload])
+    grounding_audit = build_grounding_audit_fixture(draft_payload)
+    fake_client = FakeClient([raw_graph, draft_payload, grounding_audit])
     context = {
         "project_source": source_text,
         "local_analysis": {"prediction": "borderline"},
-        "local_strategy": {"streams": []},
+        "local_strategy": {
+            "streams": [],
+            "selected_structure": {"mode": "integrated_narrative"},
+            "rationale": ["The fixture contains one uncertainty stream."],
+        },
         "t661_evidence_assessment": {
             "routine_flags": [],
             "consistency_issues": [],
@@ -1127,11 +1237,22 @@ def validate_semantic_evidence_agent_layer():
         client=fake_client,
     )
     if end_to_end_report["drafting_decision"] != "draft_ready":
-        raise AssertionError("The mocked two-stage agent did not return a grounded draft.")
-    if len(fake_client.responses.requests) != 2:
-        raise AssertionError("The agent did not execute separate extraction and drafting stages.")
-    if usage["total_tokens"] != 120:
-        raise AssertionError("Two-stage token usage was not combined.")
+        raise AssertionError("The mocked three-stage agent did not return a grounded draft.")
+    if len(fake_client.responses.requests) != 3:
+        raise AssertionError("The agent did not execute extraction, drafting, and audit stages.")
+    if usage["total_tokens"] != 180:
+        raise AssertionError("Three-stage token usage was not combined.")
+    if end_to_end_report["grounding_audit"] != grounding_audit:
+        raise AssertionError("The independent grounding audit was not retained in the report.")
+    rendered_agent_report = render_llm_report(
+        end_to_end_report,
+        context,
+        "test-model",
+        usage=usage,
+    )
+    for expected_text in ("## Claim-Level Grounding", "Independent audit: `supported`"):
+        if expected_text not in rendered_agent_report:
+            raise AssertionError("The rendered report omitted claim-level grounding results.")
 
     blocked_graph = json.loads(json.dumps(raw_graph))
     blocked_graph["evidence_items"] = [
@@ -1167,6 +1288,40 @@ def validate_semantic_evidence_agent_layer():
     if audited_report["draft_audit"]["status"] != "failed":
         raise AssertionError("A post-draft grounding failure was not exposed in the report.")
 
+    rejected_audit = build_grounding_audit_fixture(
+        draft_payload,
+        rejected_claim_id="C244_3",
+    )
+    rejected_client = FakeClient([raw_graph, draft_payload, rejected_audit])
+    rejected_report, rejected_usage = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=rejected_client,
+    )
+    if rejected_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("An independently rejected claim did not withhold the draft.")
+    if rejected_report["t661_lines"]:
+        raise AssertionError("An independent audit failure retained T661 prose.")
+    if rejected_report["draft_audit"]["failed_stage"] != "independent_grounding_audit":
+        raise AssertionError("The independent audit failure stage was not exposed.")
+    if len(rejected_client.responses.requests) != 3 or rejected_usage["total_tokens"] != 180:
+        raise AssertionError("Independent audit failure usage was not reported correctly.")
+
+    omitted_audit = build_grounding_audit_fixture(draft_payload)
+    omitted_audit["claims"].pop()
+    omitted_client = FakeClient([raw_graph, draft_payload, omitted_audit])
+    omitted_report, _ = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=omitted_client,
+    )
+    if omitted_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("An audit that omitted a drafted claim released T661 prose.")
+    if "omitted claim IDs" not in omitted_report["draft_audit"]["message"]:
+        raise AssertionError("An omitted grounding-audit claim was not reported clearly.")
+
     print("\nSemantic evidence agent checks")
     print("=" * 80)
     print("PASS: validated exact source quotes and rejected fabricated evidence")
@@ -1175,9 +1330,10 @@ def validate_semantic_evidence_agent_layer():
     print("PASS: excluded future work from the claimed-year evidence gate")
     print("PASS: accepted prior-year starting knowledge but rejected third-party work")
     print("PASS: blocked material contradictions and asked stream-specific questions")
-    print("PASS: enforced complete evidence-ID support for every drafted line")
-    print("PASS: executed mocked extraction, readiness, drafting, and audit stages")
-    print("PASS: skipped drafting when blocked and withheld prose after audit failure")
+    print("PASS: enforced line-level and sentence-level evidence-ID support")
+    print("PASS: executed mocked extraction, readiness, drafting, and independent audit stages")
+    print("PASS: rendered claim-level support and independent audit results")
+    print("PASS: withheld prose after blocked, rejected, or omitted evidence checks")
 
 
 def validate_responses_http_client_layer():

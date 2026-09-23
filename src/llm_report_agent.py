@@ -2,6 +2,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -216,6 +217,31 @@ DRAFT_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "claim_support": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim_id": {"type": "string"},
+                    "line_number": {
+                        "type": "string",
+                        "enum": ["242", "244", "246"],
+                    },
+                    "claim_text": {"type": "string"},
+                    "evidence_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": [
+                    "claim_id",
+                    "line_number",
+                    "claim_text",
+                    "evidence_ids",
+                ],
+                "additionalProperties": False,
+            },
+        },
         "factual_risks": {
             "type": "array",
             "items": {"type": "string"},
@@ -233,9 +259,45 @@ DRAFT_SCHEMA = {
         "line_244",
         "line_246",
         "draft_support",
+        "claim_support",
         "factual_risks",
         "review_notes",
     ],
+    "additionalProperties": False,
+}
+
+
+GROUNDING_AUDIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "overall_assessment": {"type": "string"},
+        "claims": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "claim_id": {"type": "string"},
+                    "verdict": {
+                        "type": "string",
+                        "enum": ["supported", "ambiguous", "unsupported"],
+                    },
+                    "reason": {"type": "string"},
+                    "evidence_ids_reviewed": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                },
+                "required": [
+                    "claim_id",
+                    "verdict",
+                    "reason",
+                    "evidence_ids_reviewed",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["overall_assessment", "claims"],
     "additionalProperties": False,
 }
 
@@ -265,8 +327,26 @@ useful learning from failed work, rather than product or business benefits.
 
 Keep Lines 242 and 246 at or below 350 words and Line 244 at or below 700 words. For
 each line, list every evidence ID used. The cited IDs must collectively cover all
-required evidence categories for that line. Do not state that the project is legally
-eligible and do not add boilerplate claims about CRA compliance.
+required evidence categories for that line. Also return one claim_support entry for
+every sentence or standalone factual statement in the three drafts. claim_text must be
+an exact substring of its draft line, and its evidence IDs must support every factual
+detail in that statement. Do not state that the project is legally eligible and do not
+add boilerplate claims about CRA compliance.
+""".strip()
+
+
+GROUNDING_AUDIT_INSTRUCTIONS = """
+You are the independent grounding-audit stage of a Canadian SR&ED report system.
+Review every drafted claim against only the accepted evidence items cited for that
+claim. Do not rely on the draft's support explanation, general plausibility, project
+summary, stream title, or outside knowledge.
+
+Mark a claim supported only when its cited exact source quotes and normalized facts
+support every material detail without inference. Mark it ambiguous when the evidence
+is related but does not establish the full claim. Mark it unsupported when it adds or
+changes a fact, causal relationship, chronology, attribution, result, record, number,
+or conclusion. Preserve failed and qualified results. Audit every claim ID exactly
+once and list the evidence IDs actually reviewed.
 """.strip()
 
 
@@ -384,6 +464,70 @@ def request_grounded_draft(
     return payload, extract_usage(response)
 
 
+def build_grounding_audit_input(graph, draft_payload):
+    evidence_index = {
+        item["id"]: item
+        for item in graph["evidence_items"]
+    }
+    cited_ids = unique_text_items(
+        evidence_id
+        for claim in draft_payload["claim_support"]
+        for evidence_id in claim["evidence_ids"]
+    )
+    audit_evidence = [
+        evidence_index[evidence_id]
+        for evidence_id in cited_ids
+        if evidence_id in evidence_index
+    ]
+    audit_payload = {
+        "drafts": {
+            line_number: draft_payload[f"line_{line_number}"]
+            for line_number in ("242", "244", "246")
+        },
+        "claim_support": draft_payload["claim_support"],
+        "cited_evidence_items": audit_evidence,
+    }
+    return json.dumps(audit_payload, indent=2, sort_keys=True)
+
+
+def request_grounding_audit(
+    graph,
+    draft_payload,
+    client,
+    model,
+    reasoning_effort="high",
+):
+    request = {
+        "model": model,
+        "instructions": GROUNDING_AUDIT_INSTRUCTIONS,
+        "input": build_grounding_audit_input(graph, draft_payload),
+        "max_output_tokens": 6000,
+        "store": False,
+        "prompt_cache_key": "sred-grounding-audit-v1",
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "sred_grounding_audit",
+                "strict": True,
+                "schema": GROUNDING_AUDIT_SCHEMA,
+            }
+        },
+    }
+    if reasoning_effort:
+        request["reasoning"] = {"effort": reasoning_effort}
+
+    response = client.responses.create(**request)
+    if not response.output_text:
+        raise RuntimeError("The grounding-audit stage returned no output.")
+
+    try:
+        payload = json.loads(response.output_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("The grounding-audit stage returned invalid JSON.") from exc
+
+    return payload, extract_usage(response)
+
+
 def request_llm_report(
     context,
     model=DEFAULT_MODEL,
@@ -430,10 +574,8 @@ def request_llm_report(
         model,
         reasoning_effort=reasoning_effort,
     )
-    usage = combine_usage(extraction_usage, drafting_usage)
-
     try:
-        report = normalize_grounded_draft(
+        normalize_grounded_draft(
             draft_payload,
             source_text,
             graph,
@@ -444,6 +586,33 @@ def request_llm_report(
             graph,
             readiness,
             audit_failure=str(exc),
+            audit_failure_stage="post_draft_local_audit",
+        )
+        return report, combine_usage(extraction_usage, drafting_usage)
+
+    grounding_audit, audit_usage = request_grounding_audit(
+        graph,
+        draft_payload,
+        client,
+        model,
+        reasoning_effort=reasoning_effort,
+    )
+    usage = combine_usage(extraction_usage, drafting_usage, audit_usage)
+    try:
+        validate_grounding_audit_payload(grounding_audit, draft_payload)
+        report = build_evidence_agent_report(
+            graph,
+            readiness,
+            draft_payload=draft_payload,
+            grounding_audit=grounding_audit,
+        )
+    except ValueError as exc:
+        report = build_evidence_agent_report(
+            graph,
+            readiness,
+            grounding_audit=grounding_audit,
+            audit_failure=str(exc),
+            audit_failure_stage="independent_grounding_audit",
         )
     return report, usage
 
@@ -510,7 +679,14 @@ def apply_local_hard_blockers(readiness, local_assessment):
     }
 
 
-def build_evidence_agent_report(graph, readiness, draft_payload=None, audit_failure=None):
+def build_evidence_agent_report(
+    graph,
+    readiness,
+    draft_payload=None,
+    grounding_audit=None,
+    audit_failure=None,
+    audit_failure_stage=None,
+):
     draft_ready = draft_payload is not None and audit_failure is None
     routine_signal = readiness.get("routine_only") or any(
         "routine" in blocker.lower()
@@ -519,17 +695,29 @@ def build_evidence_agent_report(graph, readiness, draft_payload=None, audit_fail
     accepted_count = graph["validation"]["accepted_evidence_items"]
     rejected_count = graph["validation"]["rejected_evidence_items"]
 
-    if draft_payload:
+    if audit_failure:
+        overall_assessment = (
+            "The validated evidence is complete enough for grounded drafting, but the "
+            f"generated draft was withheld by the post-draft audit: {audit_failure}"
+        )
+        structure_mode = (
+            draft_payload["structure_mode"]
+            if draft_payload
+            else "split_by_uncertainty_stream"
+            if len(graph["technical_streams"]) > 1
+            else "integrated_narrative"
+        )
+        structure_rationale = (
+            draft_payload["structure_rationale"]
+            if draft_payload
+            else "The generated draft was withheld before its proposed structure could be released."
+        )
+    elif draft_payload:
         overall_assessment = draft_payload["overall_assessment"]
         structure_mode = draft_payload["structure_mode"]
         structure_rationale = draft_payload["structure_rationale"]
     else:
-        overall_assessment = (
-            "The validated evidence is complete enough for grounded drafting, but the "
-            f"generated draft was withheld by the post-draft audit: {audit_failure}"
-            if audit_failure
-            else build_readiness_summary(readiness)
-        )
+        overall_assessment = build_readiness_summary(readiness)
         structure_mode = (
             "split_by_uncertainty_stream"
             if len(graph["technical_streams"]) > 1
@@ -603,6 +791,8 @@ def build_evidence_agent_report(graph, readiness, draft_payload=None, audit_fail
         "t661_lines": {},
         "evidence_graph": graph,
         "draft_support": draft_payload["draft_support"] if draft_ready else [],
+        "claim_support": draft_payload["claim_support"] if draft_ready else [],
+        "grounding_audit": grounding_audit or {},
         "agent_stages": [
             {"stage": "evidence_extraction", "status": "complete"},
             {
@@ -611,16 +801,33 @@ def build_evidence_agent_report(graph, readiness, draft_payload=None, audit_fail
             },
             {
                 "stage": "grounded_drafting",
-                "status": "complete" if draft_ready else "withheld",
+                "status": "complete" if readiness["can_draft"] else "not_run",
             },
             {
-                "stage": "post_draft_audit",
-                "status": "failed" if audit_failure else "passed" if draft_ready else "not_run",
+                "stage": "post_draft_local_audit",
+                "status": (
+                    "failed"
+                    if audit_failure_stage == "post_draft_local_audit"
+                    else "passed"
+                    if draft_payload or grounding_audit
+                    else "not_run"
+                ),
+            },
+            {
+                "stage": "independent_grounding_audit",
+                "status": (
+                    "failed"
+                    if audit_failure_stage == "independent_grounding_audit"
+                    else "passed"
+                    if grounding_audit and draft_ready
+                    else "not_run"
+                ),
             },
         ],
         "draft_audit": {
             "status": "failed" if audit_failure else "passed" if draft_ready else "not_run",
             "message": audit_failure or "",
+            "failed_stage": audit_failure_stage or "",
         },
     }
     if draft_ready:
@@ -640,6 +847,8 @@ def normalize_grounded_draft(payload, source_text, graph, readiness):
     }
     if len(payload["draft_support"]) != 3 or set(support_by_line) != {"242", "244", "246"}:
         raise ValueError("The draft must provide one support map for each T661 line.")
+
+    validate_claim_support(payload, support_by_line, evidence_index)
 
     for line_number in ("242", "244", "246"):
         draft = str(payload[f"line_{line_number}"]).strip()
@@ -692,7 +901,7 @@ def validate_grounded_draft_payload(payload):
         raise ValueError("The grounded draft is missing fields: " + ", ".join(missing))
     if payload["structure_mode"] not in STRUCTURE_MODES:
         raise ValueError("The grounded draft has an invalid structure mode.")
-    for field in ("draft_support", "factual_risks", "review_notes"):
+    for field in ("draft_support", "claim_support", "factual_risks", "review_notes"):
         if not isinstance(payload[field], list):
             raise ValueError(f"The grounded draft field '{field}' must be a list.")
     for field in (
@@ -720,9 +929,151 @@ def validate_grounded_draft_payload(payload):
         if not isinstance(support["coverage_note"], str):
             raise ValueError("A draft support coverage note must be a string.")
 
+    seen_claim_ids = set()
+    for claim in payload["claim_support"]:
+        if not isinstance(claim, dict):
+            raise ValueError("Every claim support entry must be an object.")
+        required = {"claim_id", "line_number", "claim_text", "evidence_ids"}
+        if not required.issubset(claim):
+            raise ValueError("A claim support entry is missing required fields.")
+        claim_id = claim["claim_id"]
+        if not isinstance(claim_id, str) or not claim_id.strip():
+            raise ValueError("Every claim support entry must have a non-empty claim ID.")
+        if claim_id in seen_claim_ids:
+            raise ValueError(f"Duplicate claim support ID: {claim_id}.")
+        seen_claim_ids.add(claim_id)
+        if claim["line_number"] not in {"242", "244", "246"}:
+            raise ValueError("A claim support entry has an invalid line number.")
+        if not isinstance(claim["claim_text"], str) or not claim["claim_text"].strip():
+            raise ValueError("Every claim support entry must have non-empty claim text.")
+        if not isinstance(claim["evidence_ids"], list) or not claim["evidence_ids"]:
+            raise ValueError("Every drafted claim must cite at least one evidence ID.")
+        if not all(isinstance(item, str) and item.strip() for item in claim["evidence_ids"]):
+            raise ValueError("Claim support evidence IDs must be non-empty strings.")
+
     for field in ("factual_risks", "review_notes"):
         if not all(isinstance(item, str) for item in payload[field]):
             raise ValueError(f"Every grounded draft {field} item must be a string.")
+
+
+def split_draft_claims(draft):
+    claims = []
+    for block in re.split(r"\n+", str(draft)):
+        block = block.strip()
+        if not block:
+            continue
+        start = 0
+        for match in re.finditer(r"[.!?](?=\s+[A-Z0-9]|$)", block):
+            claim = block[start:match.end()].strip()
+            if claim:
+                claims.append(claim)
+            start = match.end()
+            while start < len(block) and block[start].isspace():
+                start += 1
+        remainder = block[start:].strip()
+        if remainder:
+            claims.append(remainder)
+    return claims
+
+
+def validate_claim_support(payload, support_by_line, evidence_index):
+    claims_by_line = {line_number: [] for line_number in ("242", "244", "246")}
+    for claim in payload["claim_support"]:
+        line_number = claim["line_number"]
+        draft = payload[f"line_{line_number}"]
+        claim_text = claim["claim_text"].strip()
+        if claim_text not in draft:
+            raise ValueError(
+                f"Claim {claim['claim_id']} is not an exact substring of Line {line_number}."
+            )
+        unknown_ids = sorted(set(claim["evidence_ids"]) - set(evidence_index))
+        if unknown_ids:
+            raise ValueError(
+                f"Claim {claim['claim_id']} cited unknown evidence IDs: "
+                + ", ".join(unknown_ids)
+                + "."
+            )
+        line_ids = set(support_by_line[line_number]["evidence_ids"])
+        outside_line = sorted(set(claim["evidence_ids"]) - line_ids)
+        if outside_line:
+            raise ValueError(
+                f"Claim {claim['claim_id']} cited evidence outside Line {line_number}'s "
+                f"support map: {', '.join(outside_line)}."
+            )
+        claims_by_line[line_number].append(claim_text)
+
+    for line_number in ("242", "244", "246"):
+        expected_claims = split_draft_claims(payload[f"line_{line_number}"])
+        supplied_claims = claims_by_line[line_number]
+        missing = [claim for claim in expected_claims if supplied_claims.count(claim) == 0]
+        duplicate = [claim for claim in expected_claims if supplied_claims.count(claim) > 1]
+        extra = [claim for claim in supplied_claims if claim not in expected_claims]
+        if missing or duplicate or extra or len(supplied_claims) != len(expected_claims):
+            details = []
+            if missing:
+                details.append("missing: " + " | ".join(missing))
+            if duplicate:
+                details.append("duplicated: " + " | ".join(unique_text_items(duplicate)))
+            if extra:
+                details.append("not a complete sentence/statement: " + " | ".join(extra))
+            raise ValueError(
+                f"Line {line_number} claim support must map every sentence exactly once"
+                + (": " + "; ".join(details) if details else ".")
+            )
+
+
+def validate_grounding_audit_payload(payload, draft_payload):
+    if not isinstance(payload, dict):
+        raise ValueError("The independent grounding audit must be a JSON object.")
+    missing = [key for key in GROUNDING_AUDIT_SCHEMA["required"] if key not in payload]
+    if missing:
+        raise ValueError("The grounding audit is missing fields: " + ", ".join(missing))
+    if not isinstance(payload["overall_assessment"], str):
+        raise ValueError("The grounding audit assessment must be a string.")
+    if not isinstance(payload["claims"], list):
+        raise ValueError("The grounding audit claims field must be a list.")
+
+    expected = {claim["claim_id"]: claim for claim in draft_payload["claim_support"]}
+    audited = {}
+    for audit in payload["claims"]:
+        if not isinstance(audit, dict):
+            raise ValueError("Every grounding audit claim must be an object.")
+        required = {"claim_id", "verdict", "reason", "evidence_ids_reviewed"}
+        if not required.issubset(audit):
+            raise ValueError("A grounding audit claim is missing required fields.")
+        claim_id = audit["claim_id"]
+        if claim_id not in expected:
+            raise ValueError(f"The grounding audit returned unknown claim ID {claim_id}.")
+        if claim_id in audited:
+            raise ValueError(f"The grounding audit duplicated claim ID {claim_id}.")
+        if audit["verdict"] not in {"supported", "ambiguous", "unsupported"}:
+            raise ValueError(f"The grounding audit returned an invalid verdict for {claim_id}.")
+        if not isinstance(audit["reason"], str) or not audit["reason"].strip():
+            raise ValueError(f"The grounding audit returned no reason for {claim_id}.")
+        reviewed = audit["evidence_ids_reviewed"]
+        if not isinstance(reviewed, list) or not reviewed or not all(
+            isinstance(item, str) and item.strip() for item in reviewed
+        ):
+            raise ValueError(f"The grounding audit reviewed no valid evidence for {claim_id}.")
+        cited = expected[claim_id]["evidence_ids"]
+        if set(reviewed) != set(cited):
+            raise ValueError(
+                f"The grounding audit did not review exactly the cited evidence for {claim_id}."
+            )
+        audited[claim_id] = audit
+
+    missing_claims = sorted(set(expected) - set(audited))
+    if missing_claims:
+        raise ValueError(
+            "The grounding audit omitted claim IDs: " + ", ".join(missing_claims) + "."
+        )
+    failed = [
+        f"{claim_id} ({audit['verdict']}): {audit['reason'].strip()}"
+        for claim_id, audit in audited.items()
+        if audit["verdict"] != "supported"
+    ]
+    if failed:
+        raise ValueError("Independent grounding audit rejected claims: " + "; ".join(failed))
 
 
 def validate_line_support(
@@ -1029,6 +1380,25 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
                     "",
                     support["coverage_note"],
                 ])
+        if report.get("claim_support"):
+            audit_by_claim = {
+                item["claim_id"]: item
+                for item in report.get("grounding_audit", {}).get("claims", [])
+            }
+            lines.extend(["", "## Claim-Level Grounding"])
+            for claim in report["claim_support"]:
+                audit = audit_by_claim.get(claim["claim_id"], {})
+                evidence_ids = ", ".join(claim["evidence_ids"])
+                lines.extend([
+                    "",
+                    f"### {claim['claim_id']} - Line {claim['line_number']}",
+                    "",
+                    claim["claim_text"],
+                    "",
+                    f"- Evidence IDs: {evidence_ids}",
+                    f"- Independent audit: `{audit.get('verdict', 'not_run')}`",
+                    f"- Audit reason: {audit.get('reason', 'Not available.')}",
+                ])
     else:
         audit_failed = report.get("draft_audit", {}).get("status") == "failed"
         withholding_message = (
@@ -1152,7 +1522,7 @@ def build_parser():
         "--reasoning-effort",
         choices=sorted(REASONING_EFFORTS),
         default=os.environ.get("OPENAI_REASONING_EFFORT", "high"),
-        help="Reasoning effort for extraction and drafting (default: %(default)s).",
+        help="Reasoning effort for extraction, drafting, and audit (default: %(default)s).",
     )
     parser.add_argument(
         "--dry-run",

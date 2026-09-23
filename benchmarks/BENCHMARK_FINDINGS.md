@@ -137,9 +137,12 @@ The local readiness gate requires objective, starting knowledge, standard-practi
 limit, and uncertainty evidence for Line 242; hypothesis, claimed-year investigation,
 result, conclusion, and supporting-record evidence for Line 244; and claimed-year
 advancement evidence for Line 246. Drafting occurs in a second model call only after
-all streams pass. A post-draft audit requires evidence IDs for every category and
-stream, checks word limits, and withholds all prose if it finds an unsupported numeric
-fact. Mocked end-to-end tests exercise these stages without making a paid API call.
+all streams pass. A local post-draft audit requires evidence IDs for every category,
+stream, and sentence; checks word limits and numeric grounding; and rejects incomplete
+or out-of-scope claim maps. A third, independent model call reviews every sentence
+against exactly its cited evidence. Any ambiguous, unsupported, missing, duplicated, or
+partially reviewed claim causes all T661 prose to be withheld. Mocked end-to-end tests
+exercise these stages without making a paid API call.
 
 ## Remaining Limits
 
