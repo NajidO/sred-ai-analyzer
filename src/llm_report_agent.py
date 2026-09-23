@@ -17,6 +17,7 @@ from evidence_agent import (
 )
 from grounding import find_unsupported_numeric_facts
 from report_strategy import build_report_strategy
+from responses_http_client import ResponsesHTTPClient
 from t661_evidence_assessment import build_t661_evidence_assessment
 from technical_report import (
     T661_LINE_WORD_LIMITS,
@@ -395,17 +396,8 @@ def request_llm_report(
             "Reasoning effort must be one of: " + ", ".join(sorted(REASONING_EFFORTS))
         )
 
-    try:
-        if client is None:
-            from openai import OpenAI
-    except ImportError as exc:
-        raise RuntimeError(
-            "The OpenAI Python package is not installed. Run "
-            "'venv/bin/python -m pip install -r requirements.txt'."
-        ) from exc
-
     if client is None:
-        client = OpenAI(api_key=resolve_api_key(api_key))
+        client = build_responses_client(resolve_api_key(api_key))
 
     source_text = context["project_source"]
     advisory_context = {
@@ -454,6 +446,17 @@ def request_llm_report(
             audit_failure=str(exc),
         )
     return report, usage
+
+
+def build_responses_client(api_key):
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return ResponsesHTTPClient(api_key=api_key)
+    sdk_client = OpenAI(api_key=api_key)
+    if not hasattr(sdk_client, "responses"):
+        return ResponsesHTTPClient(api_key=api_key)
+    return sdk_client
 
 
 def apply_local_hard_blockers(readiness, local_assessment):

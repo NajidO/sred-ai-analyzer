@@ -1,7 +1,9 @@
 from pathlib import Path
 from collections import Counter
 from tempfile import TemporaryDirectory
+from io import BytesIO
 import json
+from urllib.error import HTTPError
 
 import pandas as pd
 import joblib
@@ -19,6 +21,7 @@ from intake_agent import build_updated_description, select_intake_questions
 from llm_report_agent import (
     build_local_context,
     build_model_input,
+    build_responses_client,
     find_new_measurements,
     normalize_grounded_draft,
     normalize_report_payload,
@@ -34,6 +37,7 @@ from case_store import (
 from questions import generate_followup_questions, generate_cra_reference_questions
 from rules import extract_signals
 from report_strategy import build_report_strategy
+from responses_http_client import ResponsesHTTPClient
 from run_capability_benchmark import run_benchmark
 from technical_report import (
     T661_LINE_WORD_LIMITS,
@@ -1176,6 +1180,116 @@ def validate_semantic_evidence_agent_layer():
     print("PASS: skipped drafting when blocked and withheld prose after audit failure")
 
 
+def validate_responses_http_client_layer():
+    captured = {}
+    response_payload = {
+        "output": [
+            {
+                "type": "message",
+                "content": [
+                    {"type": "output_text", "text": '{"status":"ok"}'},
+                ],
+            }
+        ],
+        "usage": {
+            "input_tokens": 14,
+            "output_tokens": 6,
+            "total_tokens": 20,
+        },
+    }
+
+    class FakeHTTPResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def read(self):
+            return json.dumps(response_payload).encode("utf-8")
+
+    def fake_opener(request, timeout):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["authorization"] = request.get_header("Authorization")
+        captured["timeout"] = timeout
+        return FakeHTTPResponse()
+
+    client = ResponsesHTTPClient(
+        api_key="test-secret-key",
+        base_url="https://api.openai.com/v1/",
+        timeout_seconds=42,
+        opener=fake_opener,
+    )
+    response = client.responses.create(
+        model="test-model",
+        instructions="Return structured evidence.",
+        input="Project source",
+        store=False,
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "test_schema",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {"status": {"type": "string"}},
+                    "required": ["status"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+    )
+
+    if captured["url"] != "https://api.openai.com/v1/responses":
+        raise AssertionError("The HTTP fallback used the wrong Responses API URL.")
+    if captured["authorization"] != "Bearer test-secret-key":
+        raise AssertionError("The HTTP fallback omitted bearer authentication.")
+    if captured["timeout"] != 42:
+        raise AssertionError("The HTTP fallback omitted the configured timeout.")
+    if captured["body"]["text"]["format"]["strict"] is not True:
+        raise AssertionError("The HTTP fallback altered the structured-output request.")
+    if response.output_text != '{"status":"ok"}':
+        raise AssertionError("The HTTP fallback did not extract Responses output text.")
+    if response.usage.total_tokens != 20:
+        raise AssertionError("The HTTP fallback did not expose token usage.")
+
+    selected_client = build_responses_client("test-key")
+    if not hasattr(selected_client, "responses"):
+        raise AssertionError("The report agent did not select a Responses-capable client.")
+
+    def error_opener(request, timeout):
+        raise HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            {},
+            BytesIO(b'{"error":{"message":"Invalid schema"}}'),
+        )
+
+    error_client = ResponsesHTTPClient(
+        api_key="do-not-leak-this-key",
+        opener=error_opener,
+    )
+    try:
+        error_client.responses.create(model="test-model", input="source")
+    except RuntimeError as exc:
+        error_message = str(exc)
+        if "HTTP 400: Invalid schema" not in error_message:
+            raise AssertionError("The HTTP fallback hid the API error detail.")
+        if "do-not-leak-this-key" in error_message:
+            raise AssertionError("The HTTP fallback exposed the API key in an error.")
+    else:
+        raise AssertionError("The HTTP fallback did not raise an API error.")
+
+    print("\nResponses HTTP fallback checks")
+    print("=" * 80)
+    print("PASS: serialized strict Responses API requests without the OpenAI SDK")
+    print("PASS: parsed output text and token usage")
+    print("PASS: selected a Responses-capable transport without a required SDK")
+    print("PASS: returned useful API errors without exposing the API key")
+
+
 def validate_incomplete_intake_capability(model):
     source_path = BASE_DIR / "examples" / "incomplete_sem_client_draft.md"
     expected_path = BASE_DIR / "examples" / "incomplete_sem_expected_gaps.json"
@@ -1403,5 +1517,6 @@ validate_t661_questionnaire_drafting(model)
 validate_report_strategy_layer(model)
 validate_llm_report_agent_layer()
 validate_semantic_evidence_agent_layer()
+validate_responses_http_client_layer()
 validate_incomplete_intake_capability(model)
 validate_t661_capability_benchmarks(model)

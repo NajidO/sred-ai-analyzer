@@ -42,6 +42,7 @@ src/
   case_manager.py
   evidence_agent.py
   grounding.py
+  responses_http_client.py
   technical_report.py
   train_sred_classifier.py
   run_tests.py
@@ -165,6 +166,13 @@ Install the updated requirements and pass a UTF-8 text or Markdown project descr
 venv/bin/python -m pip install -r requirements.txt
 venv/bin/python src/llm_report_agent.py /path/to/project.txt --show
 ```
+
+The agent uses the official OpenAI Responses API. When the optional `openai` Python
+package is installed it uses that SDK; otherwise it automatically uses the included
+standard-library HTTPS client, so no additional package is required for model calls.
+Both transports send the same strict Structured Outputs request. See the official
+[Responses API reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
+and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
 
 If `OPENAI_API_KEY` is not already set, the command asks for the key securely. Terminal
 does not display characters while you paste or type the key; press Return when finished.
