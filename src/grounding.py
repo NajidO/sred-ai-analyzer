@@ -10,20 +10,84 @@ NUMERIC_FACT_PATTERN = re.compile(
 
 
 def normalize_source_text(text):
-    normalized = (
-        text.replace(chr(8211), "-")
-        .replace(chr(8212), "-")
-        .replace(chr(8216), "'")
-        .replace(chr(8217), "'")
-        .replace(chr(8220), '"')
-        .replace(chr(8221), '"')
-    )
-    return " ".join(normalized.split()).casefold()
+    normalized, _ = normalize_source_with_index_map(text)
+    return normalized
+
+
+def normalize_source_with_index_map(text):
+    replacements = {
+        chr(8211): "-",
+        chr(8212): "-",
+        chr(8216): "'",
+        chr(8217): "'",
+        chr(8220): '"',
+        chr(8221): '"',
+    }
+    normalized = []
+    source_indexes = []
+    pending_space_index = None
+
+    for source_index, character in enumerate(str(text)):
+        transformed = replacements.get(character, character).casefold()
+        if transformed.isspace():
+            if normalized and pending_space_index is None:
+                pending_space_index = source_index
+            continue
+        if pending_space_index is not None:
+            normalized.append(" ")
+            source_indexes.append(pending_space_index)
+            pending_space_index = None
+        for output_character in transformed:
+            normalized.append(output_character)
+            source_indexes.append(source_index)
+
+    return "".join(normalized), source_indexes
 
 
 def source_contains_quote(source_text, quote):
+    return bool(find_source_quote_locations(source_text, quote))
+
+
+def find_source_quote_locations(source_text, quote):
+    source_text = str(source_text)
+    normalized_source, source_indexes = normalize_source_with_index_map(source_text)
     normalized_quote = normalize_source_text(quote)
-    return bool(normalized_quote) and normalized_quote in normalize_source_text(source_text)
+    if not normalized_quote:
+        return []
+
+    locations = []
+    search_start = 0
+    while True:
+        match_start = normalized_source.find(normalized_quote, search_start)
+        if match_start < 0:
+            break
+        match_end = match_start + len(normalized_quote)
+        source_start = source_indexes[match_start]
+        source_end = source_indexes[match_end - 1] + 1
+        start_line = source_text.count("\n", 0, source_start) + 1
+        end_line = source_text.count("\n", 0, source_end - 1) + 1
+        line_start_index = source_text.rfind("\n", 0, source_start) + 1
+        locations.append({
+            "start_char": source_start,
+            "end_char": source_end,
+            "start_line": start_line,
+            "end_line": end_line,
+            "start_column": source_start - line_start_index + 1,
+        })
+        search_start = match_start + 1
+    return locations
+
+
+def format_source_location(location):
+    line_label = (
+        f"line {location['start_line']}"
+        if location["start_line"] == location["end_line"]
+        else f"lines {location['start_line']}-{location['end_line']}"
+    )
+    return (
+        f"{line_label}, column {location['start_column']}, "
+        f"characters {location['start_char']}-{location['end_char']}"
+    )
 
 
 def extract_numeric_facts(text):

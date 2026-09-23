@@ -149,6 +149,8 @@ evidence is complete:
 1. Evidence extraction creates typed technical streams and exact source-quote-backed
    evidence items. Each item records certainty, claimed/prior/future timing, and whether
    the work belongs to the claimant, a claimant-directed contractor, or a third party.
+   Local code derives line, column, and character locations and rejects repeated quotes
+   whose occurrence cannot be identified unambiguously.
 2. An independent evidence-audit call checks every extracted item's normalized fact,
    category, certainty, tax-year scope, attribution, and stream assignment. Unsupported
    or ambiguous items are removed, and newly detected contradictions block affected lines.

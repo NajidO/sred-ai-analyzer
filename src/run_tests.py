@@ -17,6 +17,7 @@ from cra_guideline_checker import check_against_cra_guidelines
 from evidence_mapper import map_to_sred_framework
 from evidence_agent import assess_evidence_graph, normalize_evidence_graph
 from explanation import generate_label_explanation
+from grounding import find_source_quote_locations, format_source_location
 from intake_agent import build_updated_description, select_intake_questions
 from llm_report_agent import (
     build_evidence_agent_report,
@@ -1070,6 +1071,60 @@ def validate_semantic_evidence_agent_layer():
         raise AssertionError("The evidence validator rejected a supported fixture item.")
     if not readiness["can_draft"]:
         raise AssertionError("A complete validated evidence graph was not draft-ready.")
+    if graph["evidence_items"][0]["source_location"].startswith("fixture:"):
+        raise AssertionError("A model-authored source location was trusted.")
+    if not graph["evidence_items"][0]["source_location"].startswith(
+        "line 1, column 1, characters 0-"
+    ):
+        raise AssertionError("The exact quote did not receive deterministic provenance.")
+
+    typography_source = "Heading\nThe \u201cteam\u201d tested A \u2014 B.\nConclusion"
+    typography_quote = 'The "team" tested A - B.'
+    typography_locations = find_source_quote_locations(
+        typography_source,
+        typography_quote,
+    )
+    if len(typography_locations) != 1:
+        raise AssertionError("Normalized typography did not retain source provenance.")
+    if format_source_location(typography_locations[0]) != (
+        "line 2, column 1, characters 8-32"
+    ):
+        raise AssertionError("Normalized quote provenance returned the wrong location.")
+
+    multiline_locations = find_source_quote_locations(
+        "Alpha beta\n gamma delta",
+        "beta gamma",
+    )
+    if len(multiline_locations) != 1 or format_source_location(
+        multiline_locations[0]
+    ) != "lines 1-2, column 7, characters 6-17":
+        raise AssertionError("Multi-line quote provenance returned the wrong location.")
+
+    duplicate_source = source_text + "\n" + source_text.splitlines()[0]
+    duplicate_graph = normalize_evidence_graph(raw_graph, duplicate_source)
+    duplicate_rejections = duplicate_graph["validation"]["rejected_items"]
+    if not any(
+        "matched 2 locations" in reason
+        for item in duplicate_rejections
+        for reason in item["reasons"]
+    ):
+        raise AssertionError("An ambiguous repeated source quote was accepted.")
+    duplicate_readiness = assess_evidence_graph(duplicate_graph)
+    if duplicate_readiness["sections"]["242"]["status"] != "needs_more_information":
+        raise AssertionError("Ambiguous objective provenance did not block Line 242.")
+
+    duplicated_year_quote = raw_graph["claimed_tax_year_source_quote"]
+    duplicate_year_graph = normalize_evidence_graph(
+        raw_graph,
+        source_text + "\n" + duplicated_year_quote,
+    )
+    if duplicate_year_graph["claimed_tax_year"]:
+        raise AssertionError("An ambiguous claimed tax year source quote was accepted.")
+    if not any(
+        "Claimed tax year was cleared" in note
+        for note in duplicate_year_graph["extraction_notes"]
+    ):
+        raise AssertionError("A rejected claimed tax year was not explained.")
 
     prior_knowledge = json.loads(json.dumps(raw_graph))
     prior_knowledge["evidence_items"][1]["tax_year_scope"] = "prior_year"
@@ -1320,6 +1375,7 @@ def validate_semantic_evidence_agent_layer():
         "Evidence items reviewed: 10",
         "## Claim-Level Grounding",
         "Independent audit: `supported`",
+        "Source location: line 1, column 1, characters 0-",
     ):
         if expected_text not in rendered_agent_report:
             raise AssertionError("The rendered report omitted claim-level grounding results.")
@@ -1470,6 +1526,7 @@ def validate_semantic_evidence_agent_layer():
     print("\nSemantic evidence agent checks")
     print("=" * 80)
     print("PASS: validated exact source quotes and rejected fabricated evidence")
+    print("PASS: derived exact source locations and rejected ambiguous repeated quotes")
     print("PASS: rejected unsupported normalized and drafted numeric facts")
     print("PASS: excluded inferred claims and rejected stream-specific GLOBAL evidence")
     print("PASS: excluded future work from the claimed-year evidence gate")

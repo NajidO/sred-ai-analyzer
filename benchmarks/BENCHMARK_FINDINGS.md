@@ -130,8 +130,10 @@ The optional OpenAI path now uses a strict evidence-extraction schema followed b
 independent evidence-classification audit before readiness. Every extracted item must
 contain an exact source quote and records its certainty, tax-year scope, technical
 stream, category, and attribution. Local code rejects fabricated quotes, unsupported
-normalized numbers, stream-specific evidence assigned globally, and obvious
-claimed-year conflicts. The independent audit reviews every item across six semantic
+normalized numbers, ambiguous repeated quotes, stream-specific evidence assigned
+globally, and obvious claimed-year conflicts. It derives the final line, column, and
+character location instead of trusting a model-authored location. The independent audit
+reviews every item across six semantic
 dimensions, removes unsupported or ambiguous classifications, and can add material
 contradictions that the extraction stage missed.
 
