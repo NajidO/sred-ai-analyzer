@@ -126,20 +126,23 @@ examples.
 
 ## Semantic Agent Safeguards
 
-The optional OpenAI path now uses a separate strict evidence-extraction schema before
-drafting. Every accepted item must contain an exact source quote and records its
-certainty, tax-year scope, technical stream, category, and attribution. Local code
-rejects fabricated quotes, unsupported normalized numbers, stream-specific evidence
-assigned globally, obvious claimed-year conflicts, and third-party or unclear work as
-support for claimant investigation.
+The optional OpenAI path now uses a strict evidence-extraction schema followed by an
+independent evidence-classification audit before readiness. Every extracted item must
+contain an exact source quote and records its certainty, tax-year scope, technical
+stream, category, and attribution. Local code rejects fabricated quotes, unsupported
+normalized numbers, stream-specific evidence assigned globally, and obvious
+claimed-year conflicts. The independent audit reviews every item across six semantic
+dimensions, removes unsupported or ambiguous classifications, and can add material
+contradictions that the extraction stage missed.
 
 The local readiness gate requires objective, starting knowledge, standard-practice
 limit, and uncertainty evidence for Line 242; hypothesis, claimed-year investigation,
 result, conclusion, and supporting-record evidence for Line 244; and claimed-year
-advancement evidence for Line 246. Drafting occurs in a second model call only after
-all streams pass. A local post-draft audit requires evidence IDs for every category,
+advancement evidence for Line 246. Drafting occurs only after all streams pass the
+evidence audit and readiness gate. A local post-draft audit requires evidence IDs for
+every category,
 stream, and sentence; checks word limits and numeric grounding; and rejects incomplete
-or out-of-scope claim maps. A third, independent model call reviews every sentence
+or out-of-scope claim maps. A final independent model call reviews every sentence
 against exactly its cited evidence. Any ambiguous, unsupported, missing, duplicated, or
 partially reviewed claim causes all T661 prose to be withheld. Mocked end-to-end tests
 exercise these stages without making a paid API call.

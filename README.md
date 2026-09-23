@@ -143,21 +143,24 @@ When the agent decides that splitting is clearer, the T661 draft itself is secti
 ## Run The Evidence-First Report Agent
 
 The optional OpenAI path is the main semantic report agent. It combines the local
-classifier and deterministic safeguards with three separate model stages when the
+classifier and deterministic safeguards with four separate model stages when the
 evidence is complete:
 
 1. Evidence extraction creates typed technical streams and exact source-quote-backed
    evidence items. Each item records certainty, claimed/prior/future timing, and whether
    the work belongs to the claimant, a claimant-directed contractor, or a third party.
-2. A local readiness gate checks every stream against the evidence needed for Lines
+2. An independent evidence-audit call checks every extracted item's normalized fact,
+   category, certainty, tax-year scope, attribution, and stream assignment. Unsupported
+   or ambiguous items are removed, and newly detected contradictions block affected lines.
+3. A local readiness gate checks every stream against the evidence needed for Lines
    242, 244, and 246. It blocks contradictory, future, unattributed, routine, or
    incomplete evidence and generates targeted questions instead of a partial report.
-3. Grounded drafting runs only after every line passes. The model must cite evidence
+4. Grounded drafting runs only after every line passes. The model must cite evidence
    IDs for each line and for every sentence or standalone factual statement.
-4. A local post-draft audit rejects missing sentence maps, unknown or out-of-scope
+5. A local post-draft audit rejects missing sentence maps, unknown or out-of-scope
    evidence IDs, missing category support, over-limit prose, and numeric facts not
    present in the client source.
-5. An independent grounding call checks every drafted claim against exactly its cited
+6. An independent grounding call checks every drafted claim against exactly its cited
    evidence. Any ambiguous, unsupported, omitted, or incompletely reviewed claim causes
    all T661 prose to be withheld.
 
@@ -213,10 +216,10 @@ venv/bin/python src/llm_report_agent.py /path/to/project.txt --dry-run
 
 The model calls use strict structured outputs. Source text is treated as untrusted
 client evidence, so instructions embedded inside it do not override the agent. Exact
-quote validation and numeric grounding are deterministic local checks. These controls
-reduce unsupported drafting, and the independent audit adds a second semantic check;
-they cannot verify whether the client's statement or record is true. Human technical
-and tax review is mandatory.
+quote validation and numeric grounding are deterministic local checks. Independent
+audits check both evidence classification and final claim support. These controls reduce
+unsupported drafting; they cannot verify whether the client's statement or record is
+true. Human technical and tax review is mandatory.
 
 ## Test An Incomplete Client Intake
 
@@ -297,9 +300,10 @@ treating the analyzer as reliable.
 
 ## Known Limits And Next Validation
 
-- The semantic path requires an OpenAI API key. It makes one extraction call; when the
-  evidence gate passes it also makes a drafting call and an independent grounding-audit
-  call, increasing cost and latency in exchange for stricter claim-level support.
+- The semantic path requires an OpenAI API key. It makes extraction and independent
+  evidence-audit calls for every case; when the evidence gate passes it also makes a
+  drafting call and an independent claim-grounding call. This increases cost and latency
+  in exchange for stricter evidence- and claim-level support.
 - Offline benchmarks are synthetic regression tests, not production accuracy or an
   eligibility opinion.
 - Exact quotes prove only that a statement appeared in the supplied source. They do

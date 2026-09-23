@@ -11,10 +11,13 @@ from analysis_engine import BASE_DIR, analyze_text, load_classifier
 from case_store import make_json_safe, summarize_analysis
 from evidence_agent import (
     LINE_REQUIREMENTS,
+    apply_evidence_audit,
     assess_evidence_graph,
     build_stream_summaries,
     evidence_item_supports_requirement,
     request_evidence_graph,
+    request_evidence_graph_audit,
+    validate_evidence_audit_payload,
 )
 from grounding import find_unsupported_numeric_facts
 from report_strategy import build_report_strategy
@@ -556,6 +559,35 @@ def request_llm_report(
         local_context=advisory_context,
         reasoning_effort=reasoning_effort,
     )
+    evidence_audit, evidence_audit_usage = request_evidence_graph_audit(
+        source_text,
+        graph,
+        client,
+        model,
+        reasoning_effort=reasoning_effort,
+    )
+    pre_draft_usage = combine_usage(extraction_usage, evidence_audit_usage)
+    try:
+        validate_evidence_audit_payload(evidence_audit, graph)
+        graph = apply_evidence_audit(graph, evidence_audit)
+    except ValueError as exc:
+        readiness = assess_evidence_graph(graph)
+        readiness = apply_global_hard_blocker(
+            readiness,
+            "Independent evidence audit failed: " + str(exc),
+        )
+        readiness = apply_local_hard_blockers(
+            readiness,
+            context.get("t661_evidence_assessment", {}),
+        )
+        report = build_evidence_agent_report(
+            graph,
+            readiness,
+            evidence_audit=evidence_audit,
+            evidence_audit_failure=str(exc),
+        )
+        return report, pre_draft_usage
+
     readiness = assess_evidence_graph(graph)
     readiness = apply_local_hard_blockers(
         readiness,
@@ -563,8 +595,12 @@ def request_llm_report(
     )
 
     if not readiness["can_draft"]:
-        report = build_evidence_agent_report(graph, readiness)
-        return report, extraction_usage
+        report = build_evidence_agent_report(
+            graph,
+            readiness,
+            evidence_audit=evidence_audit,
+        )
+        return report, pre_draft_usage
 
     draft_payload, drafting_usage = request_grounded_draft(
         context,
@@ -585,10 +621,11 @@ def request_llm_report(
         report = build_evidence_agent_report(
             graph,
             readiness,
+            evidence_audit=evidence_audit,
             audit_failure=str(exc),
             audit_failure_stage="post_draft_local_audit",
         )
-        return report, combine_usage(extraction_usage, drafting_usage)
+        return report, combine_usage(pre_draft_usage, drafting_usage)
 
     grounding_audit, audit_usage = request_grounding_audit(
         graph,
@@ -597,19 +634,21 @@ def request_llm_report(
         model,
         reasoning_effort=reasoning_effort,
     )
-    usage = combine_usage(extraction_usage, drafting_usage, audit_usage)
+    usage = combine_usage(pre_draft_usage, drafting_usage, audit_usage)
     try:
         validate_grounding_audit_payload(grounding_audit, draft_payload)
         report = build_evidence_agent_report(
             graph,
             readiness,
             draft_payload=draft_payload,
+            evidence_audit=evidence_audit,
             grounding_audit=grounding_audit,
         )
     except ValueError as exc:
         report = build_evidence_agent_report(
             graph,
             readiness,
+            evidence_audit=evidence_audit,
             grounding_audit=grounding_audit,
             audit_failure=str(exc),
             audit_failure_stage="independent_grounding_audit",
@@ -636,7 +675,7 @@ def apply_local_hard_blockers(readiness, local_assessment):
         }
         for line_number, section in readiness["sections"].items()
     }
-    hard_blockers = []
+    hard_blockers = list(readiness.get("hard_blockers", []))
 
     routine_flags = local_assessment.get("routine_flags", [])
     if routine_flags:
@@ -679,15 +718,55 @@ def apply_local_hard_blockers(readiness, local_assessment):
     }
 
 
+def apply_global_hard_blocker(readiness, message):
+    sections = {
+        line_number: {
+            **section,
+            "status": "needs_more_information",
+            "missing_information": unique_text_items(
+                [*section["missing_information"], message]
+            ),
+        }
+        for line_number, section in readiness["sections"].items()
+    }
+    return {
+        **readiness,
+        "decision": "needs_more_information",
+        "can_draft": False,
+        "blocked_lines": list(sections),
+        "sections": sections,
+        "hard_blockers": unique_text_items(
+            [*readiness.get("hard_blockers", []), message]
+        ),
+    }
+
+
 def build_evidence_agent_report(
     graph,
     readiness,
     draft_payload=None,
+    evidence_audit=None,
+    evidence_audit_failure=None,
     grounding_audit=None,
     audit_failure=None,
     audit_failure_stage=None,
 ):
-    draft_ready = draft_payload is not None and audit_failure is None
+    evidence_audit_complete = graph["validation"].get("semantic_audit_passed") is True
+    grounding_audit_complete = False
+    if draft_payload is not None and grounding_audit is not None:
+        try:
+            validate_grounding_audit_payload(grounding_audit, draft_payload)
+        except ValueError:
+            grounding_audit_complete = False
+        else:
+            grounding_audit_complete = True
+    draft_ready = (
+        draft_payload is not None
+        and evidence_audit_complete
+        and grounding_audit_complete
+        and evidence_audit_failure is None
+        and audit_failure is None
+    )
     routine_signal = readiness.get("routine_only") or any(
         "routine" in blocker.lower()
         for blocker in readiness.get("hard_blockers", [])
@@ -695,7 +774,21 @@ def build_evidence_agent_report(
     accepted_count = graph["validation"]["accepted_evidence_items"]
     rejected_count = graph["validation"]["rejected_evidence_items"]
 
-    if audit_failure:
+    if evidence_audit_failure:
+        overall_assessment = (
+            "The extracted evidence could not pass the independent semantic audit, so "
+            f"readiness and T661 drafting were withheld: {evidence_audit_failure}"
+        )
+        structure_mode = (
+            "split_by_uncertainty_stream"
+            if len(graph["technical_streams"]) > 1
+            else "integrated_narrative"
+        )
+        structure_rationale = (
+            "No report structure is released until every extracted evidence item is "
+            "accounted for by the semantic audit."
+        )
+    elif audit_failure:
         overall_assessment = (
             "The validated evidence is complete enough for grounded drafting, but the "
             f"generated draft was withheld by the post-draft audit: {audit_failure}"
@@ -745,6 +838,8 @@ def build_evidence_agent_report(
         for item in graph["attribution_issues"]
     )
     factual_risks.extend(readiness.get("hard_blockers", []))
+    if evidence_audit_failure:
+        factual_risks.insert(0, "Evidence audit failure: " + evidence_audit_failure)
     if audit_failure:
         factual_risks.insert(0, "Draft audit failure: " + audit_failure)
     if draft_payload:
@@ -754,6 +849,11 @@ def build_evidence_agent_report(
         "Every accepted evidence item was matched to an exact contiguous source quote.",
         "Human technical and tax review remains required; this is not an eligibility opinion.",
     ]
+    if evidence_audit and not evidence_audit_failure:
+        review_notes.insert(
+            1,
+            "Every accepted evidence item passed an independent semantic classification audit.",
+        )
     if draft_payload:
         review_notes.extend(draft_payload["review_notes"])
 
@@ -790,11 +890,22 @@ def build_evidence_agent_report(
         "review_notes": unique_text_items(review_notes),
         "t661_lines": {},
         "evidence_graph": graph,
+        "evidence_audit": evidence_audit or graph.get("evidence_audit", {}),
         "draft_support": draft_payload["draft_support"] if draft_ready else [],
         "claim_support": draft_payload["claim_support"] if draft_ready else [],
         "grounding_audit": grounding_audit or {},
         "agent_stages": [
             {"stage": "evidence_extraction", "status": "complete"},
+            {
+                "stage": "independent_evidence_audit",
+                "status": (
+                    "failed"
+                    if evidence_audit_failure
+                    else "passed"
+                    if evidence_audit or graph.get("evidence_audit")
+                    else "not_run"
+                ),
+            },
             {
                 "stage": "readiness_gate",
                 "status": "passed" if readiness["can_draft"] else "blocked",
@@ -828,6 +939,16 @@ def build_evidence_agent_report(
             "status": "failed" if audit_failure else "passed" if draft_ready else "not_run",
             "message": audit_failure or "",
             "failed_stage": audit_failure_stage or "",
+        },
+        "evidence_audit_status": {
+            "status": (
+                "failed"
+                if evidence_audit_failure
+                else "passed"
+                if evidence_audit or graph.get("evidence_audit")
+                else "not_run"
+            ),
+            "message": evidence_audit_failure or "",
         },
     }
     if draft_ready:
@@ -886,11 +1007,7 @@ def normalize_grounded_draft(payload, source_text, graph, readiness):
             + "."
         )
 
-    return build_evidence_agent_report(
-        graph,
-        readiness,
-        draft_payload=payload,
-    )
+    return payload
 
 
 def validate_grounded_draft_payload(payload):
@@ -1414,6 +1531,45 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
             "",
             withholding_message,
         ])
+
+    evidence_audit = report.get("evidence_audit")
+    evidence_audit_status = report.get("evidence_audit_status", {})
+    if evidence_audit or evidence_audit_status.get("status") == "failed":
+        lines.extend([
+            "",
+            "## Independent Evidence Audit",
+            "",
+            f"**Status:** `{evidence_audit_status.get('status', 'not_run')}`",
+        ])
+        if evidence_audit_status.get("message"):
+            lines.extend(["", evidence_audit_status["message"]])
+        if evidence_audit:
+            item_audits = evidence_audit.get("item_audits", [])
+            rejected_ids = [
+                item["evidence_id"]
+                for item in item_audits
+                if any(
+                    item.get(dimension) != "supported"
+                    for dimension in (
+                        "normalized_fact",
+                        "category",
+                        "certainty",
+                        "tax_year_scope",
+                        "attribution",
+                        "stream_assignment",
+                    )
+                )
+            ]
+            lines.extend([
+                "",
+                evidence_audit.get("overall_assessment", "No assessment supplied."),
+                "",
+                f"- Evidence items reviewed: {len(item_audits)}",
+                "- Semantically rejected items: "
+                + (", ".join(rejected_ids) if rejected_ids else "None"),
+                "- New contradictions: "
+                + str(len(evidence_audit.get("discovered_contradictions", []))),
+            ])
 
     graph = report.get("evidence_graph")
     if graph:

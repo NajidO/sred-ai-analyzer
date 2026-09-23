@@ -19,6 +19,7 @@ from evidence_agent import assess_evidence_graph, normalize_evidence_graph
 from explanation import generate_label_explanation
 from intake_agent import build_updated_description, select_intake_questions
 from llm_report_agent import (
+    build_evidence_agent_report,
     build_local_context,
     build_model_input,
     build_responses_client,
@@ -1000,6 +1001,42 @@ def build_grounded_draft_fixture():
     }
 
 
+def build_evidence_audit_fixture(
+    graph,
+    rejected_evidence_id=None,
+    rejected_dimension="category",
+    contradictions=None,
+):
+    dimensions = (
+        "normalized_fact",
+        "category",
+        "certainty",
+        "tax_year_scope",
+        "attribution",
+        "stream_assignment",
+    )
+    item_audits = []
+    for item in graph["evidence_items"]:
+        audit = {
+            "evidence_id": item["id"],
+            **{dimension: "supported" for dimension in dimensions},
+            "reason": "The source supports every audited evidence dimension.",
+        }
+        if item["id"] == rejected_evidence_id:
+            audit[rejected_dimension] = "unsupported"
+            audit["reason"] = "The source does not support this semantic classification."
+        item_audits.append(audit)
+    return {
+        "overall_assessment": (
+            "One evidence item has an unsupported semantic classification."
+            if rejected_evidence_id
+            else "Every evidence item is semantically supported by the source."
+        ),
+        "item_audits": item_audits,
+        "discovered_contradictions": contradictions or [],
+    }
+
+
 def build_grounding_audit_fixture(draft_payload, rejected_claim_id=None):
     claims = []
     for claim in draft_payload["claim_support"]:
@@ -1116,14 +1153,23 @@ def validate_semantic_evidence_agent_layer():
         raise AssertionError("A material contradiction did not block its T661 line.")
 
     draft_payload = build_grounded_draft_fixture()
-    report = normalize_grounded_draft(
+    validated_draft = normalize_grounded_draft(
         draft_payload,
         source_text,
         graph,
         readiness,
     )
-    if report["drafting_decision"] != "draft_ready" or len(report["draft_support"]) != 3:
-        raise AssertionError("A supported grounded draft did not pass the post-draft audit.")
+    if validated_draft != draft_payload:
+        raise AssertionError("A supported grounded draft did not pass the local audit unchanged.")
+    unaudited_report = build_evidence_agent_report(
+        graph,
+        readiness,
+        draft_payload=draft_payload,
+    )
+    if unaudited_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("The report builder released a draft without both audits.")
+    if unaudited_report["t661_lines"]:
+        raise AssertionError("The report builder retained unaudited T661 prose.")
 
     unsupported_draft = json.loads(json.dumps(draft_payload))
     unsupported_draft["line_246"] += " The final error was 0.2%."
@@ -1215,8 +1261,14 @@ def validate_semantic_evidence_agent_layer():
         def __init__(self, payloads):
             self.responses = FakeResponses(payloads)
 
+    evidence_audit = build_evidence_audit_fixture(graph)
     grounding_audit = build_grounding_audit_fixture(draft_payload)
-    fake_client = FakeClient([raw_graph, draft_payload, grounding_audit])
+    fake_client = FakeClient([
+        raw_graph,
+        evidence_audit,
+        draft_payload,
+        grounding_audit,
+    ])
     context = {
         "project_source": source_text,
         "local_analysis": {"prediction": "borderline"},
@@ -1237,11 +1289,24 @@ def validate_semantic_evidence_agent_layer():
         client=fake_client,
     )
     if end_to_end_report["drafting_decision"] != "draft_ready":
-        raise AssertionError("The mocked three-stage agent did not return a grounded draft.")
-    if len(fake_client.responses.requests) != 3:
-        raise AssertionError("The agent did not execute extraction, drafting, and audit stages.")
-    if usage["total_tokens"] != 180:
-        raise AssertionError("Three-stage token usage was not combined.")
+        raise AssertionError("The mocked four-stage agent did not return a grounded draft.")
+    if len(fake_client.responses.requests) != 4:
+        raise AssertionError("The agent did not execute both evidence and drafting audits.")
+    if usage["total_tokens"] != 240:
+        raise AssertionError("Four-stage token usage was not combined.")
+    prompt_keys = [
+        request.get("prompt_cache_key")
+        for request in fake_client.responses.requests
+    ]
+    if prompt_keys != [
+        "sred-evidence-extraction-v1",
+        "sred-evidence-audit-v1",
+        "sred-grounded-drafting-v1",
+        "sred-grounding-audit-v1",
+    ]:
+        raise AssertionError("The semantic agent stages ran in the wrong order.")
+    if end_to_end_report["evidence_audit"] != evidence_audit:
+        raise AssertionError("The independent evidence audit was not retained in the report.")
     if end_to_end_report["grounding_audit"] != grounding_audit:
         raise AssertionError("The independent grounding audit was not retained in the report.")
     rendered_agent_report = render_llm_report(
@@ -1250,7 +1315,12 @@ def validate_semantic_evidence_agent_layer():
         "test-model",
         usage=usage,
     )
-    for expected_text in ("## Claim-Level Grounding", "Independent audit: `supported`"):
+    for expected_text in (
+        "## Independent Evidence Audit",
+        "Evidence items reviewed: 10",
+        "## Claim-Level Grounding",
+        "Independent audit: `supported`",
+    ):
         if expected_text not in rendered_agent_report:
             raise AssertionError("The rendered report omitted claim-level grounding results.")
 
@@ -1260,7 +1330,9 @@ def validate_semantic_evidence_agent_layer():
         for item in blocked_graph["evidence_items"]
         if item["category"] != "advancement"
     ]
-    blocked_client = FakeClient([blocked_graph])
+    normalized_blocked_graph = normalize_evidence_graph(blocked_graph, source_text)
+    blocked_evidence_audit = build_evidence_audit_fixture(normalized_blocked_graph)
+    blocked_client = FakeClient([blocked_graph, blocked_evidence_audit])
     blocked_report, blocked_usage = request_llm_report(
         context,
         model="test-model",
@@ -1269,12 +1341,12 @@ def validate_semantic_evidence_agent_layer():
     )
     if blocked_report["drafting_decision"] != "needs_more_information":
         raise AssertionError("Incomplete extracted evidence reached the drafting stage.")
-    if len(blocked_client.responses.requests) != 1:
+    if len(blocked_client.responses.requests) != 2:
         raise AssertionError("The agent called the drafting model after a blocked gate.")
-    if blocked_usage["total_tokens"] != 60:
+    if blocked_usage["total_tokens"] != 120:
         raise AssertionError("Blocked extraction usage was not reported correctly.")
 
-    audit_client = FakeClient([raw_graph, unsupported_draft])
+    audit_client = FakeClient([raw_graph, evidence_audit, unsupported_draft])
     audited_report, _ = request_llm_report(
         context,
         model="test-model",
@@ -1292,7 +1364,12 @@ def validate_semantic_evidence_agent_layer():
         draft_payload,
         rejected_claim_id="C244_3",
     )
-    rejected_client = FakeClient([raw_graph, draft_payload, rejected_audit])
+    rejected_client = FakeClient([
+        raw_graph,
+        evidence_audit,
+        draft_payload,
+        rejected_audit,
+    ])
     rejected_report, rejected_usage = request_llm_report(
         context,
         model="test-model",
@@ -1305,12 +1382,17 @@ def validate_semantic_evidence_agent_layer():
         raise AssertionError("An independent audit failure retained T661 prose.")
     if rejected_report["draft_audit"]["failed_stage"] != "independent_grounding_audit":
         raise AssertionError("The independent audit failure stage was not exposed.")
-    if len(rejected_client.responses.requests) != 3 or rejected_usage["total_tokens"] != 180:
+    if len(rejected_client.responses.requests) != 4 or rejected_usage["total_tokens"] != 240:
         raise AssertionError("Independent audit failure usage was not reported correctly.")
 
     omitted_audit = build_grounding_audit_fixture(draft_payload)
     omitted_audit["claims"].pop()
-    omitted_client = FakeClient([raw_graph, draft_payload, omitted_audit])
+    omitted_client = FakeClient([
+        raw_graph,
+        evidence_audit,
+        draft_payload,
+        omitted_audit,
+    ])
     omitted_report, _ = request_llm_report(
         context,
         model="test-model",
@@ -1322,6 +1404,69 @@ def validate_semantic_evidence_agent_layer():
     if "omitted claim IDs" not in omitted_report["draft_audit"]["message"]:
         raise AssertionError("An omitted grounding-audit claim was not reported clearly.")
 
+    rejected_evidence_audit = build_evidence_audit_fixture(
+        graph,
+        rejected_evidence_id="E9",
+        rejected_dimension="category",
+    )
+    rejected_evidence_client = FakeClient([raw_graph, rejected_evidence_audit])
+    rejected_evidence_report, rejected_evidence_usage = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=rejected_evidence_client,
+    )
+    if rejected_evidence_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("A rejected advancement classification reached drafting.")
+    if rejected_evidence_report["t661_lines"]:
+        raise AssertionError("A rejected evidence classification retained T661 prose.")
+    if rejected_evidence_report["evidence_graph"]["validation"][
+        "semantic_rejected_evidence_ids"
+    ] != ["E9"]:
+        raise AssertionError("The semantic evidence rejection was not retained.")
+    if len(rejected_evidence_client.responses.requests) != 2:
+        raise AssertionError("Drafting ran after the evidence audit removed advancement.")
+    if rejected_evidence_usage["total_tokens"] != 120:
+        raise AssertionError("Evidence rejection usage was not combined.")
+
+    omitted_evidence_audit = build_evidence_audit_fixture(graph)
+    omitted_evidence_audit["item_audits"].pop()
+    omitted_evidence_client = FakeClient([raw_graph, omitted_evidence_audit])
+    omitted_evidence_report, _ = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=omitted_evidence_client,
+    )
+    if omitted_evidence_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("An incomplete evidence audit reached drafting.")
+    if omitted_evidence_report["t661_lines"]:
+        raise AssertionError("An incomplete evidence audit retained T661 prose.")
+    if omitted_evidence_report["evidence_audit_status"]["status"] != "failed":
+        raise AssertionError("An incomplete evidence audit was not exposed as failed.")
+    if len(omitted_evidence_client.responses.requests) != 2:
+        raise AssertionError("Drafting ran after an incomplete evidence audit.")
+
+    contradiction_audit = build_evidence_audit_fixture(
+        graph,
+        contradictions=[{
+            "evidence_ids": ["E2", "E3"],
+            "description": "The baseline and standard-practice accounts conflict.",
+            "blocks_lines": ["242"],
+        }],
+    )
+    contradiction_client = FakeClient([raw_graph, contradiction_audit])
+    contradiction_report, _ = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=contradiction_client,
+    )
+    if contradiction_report["section_assessments"][0]["status"] != "needs_more_information":
+        raise AssertionError("An audit-discovered contradiction did not block Line 242.")
+    if len(contradiction_client.responses.requests) != 2:
+        raise AssertionError("Drafting ran after an audit-discovered contradiction.")
+
     print("\nSemantic evidence agent checks")
     print("=" * 80)
     print("PASS: validated exact source quotes and rejected fabricated evidence")
@@ -1331,7 +1476,10 @@ def validate_semantic_evidence_agent_layer():
     print("PASS: accepted prior-year starting knowledge but rejected third-party work")
     print("PASS: blocked material contradictions and asked stream-specific questions")
     print("PASS: enforced line-level and sentence-level evidence-ID support")
-    print("PASS: executed mocked extraction, readiness, drafting, and independent audit stages")
+    print("PASS: independently audited extracted evidence before readiness")
+    print("PASS: rejected mislabeled evidence and incomplete evidence audits")
+    print("PASS: blocked audit-discovered contradictions before drafting")
+    print("PASS: executed mocked extraction, drafting, and both audit stages")
     print("PASS: rendered claim-level support and independent audit results")
     print("PASS: withheld prose after blocked, rejected, or omitted evidence checks")
 
