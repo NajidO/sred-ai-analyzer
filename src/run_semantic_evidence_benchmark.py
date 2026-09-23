@@ -8,6 +8,7 @@ from evidence_agent import (
     SEQUENCE_AUDIT_DIMENSIONS,
     apply_evidence_audit,
     assess_evidence_graph,
+    build_evidence_structure_plan,
     normalize_evidence_graph,
     validate_evidence_audit_payload,
 )
@@ -160,6 +161,7 @@ def evaluate_case(case, base_source, base_payload):
 
     return {
         "id": case["id"],
+        "kind": "evidence_gate",
         "description": case["description"],
         "passed": not failures,
         "failures": failures,
@@ -174,12 +176,69 @@ def evaluate_case(case, base_source, base_payload):
     }
 
 
+def evaluate_structure_case(case):
+    graph = {
+        "technical_streams": case["technical_streams"],
+        "investigation_sequences": case["investigation_sequences"],
+        "evidence_items": [
+            {
+                "id": f"GLOBAL_{index}",
+                "stream_id": "GLOBAL",
+                "category": category,
+            }
+            for index, category in enumerate(
+                case.get("global_context_categories", []),
+                start=1,
+            )
+        ],
+    }
+    plan = build_evidence_structure_plan(graph)
+    expected = case["expected"]
+    failures = []
+    if plan["mode"] != expected["mode"]:
+        failures.append(
+            f"expected mode {expected['mode']}, observed {plan['mode']}"
+        )
+    expected_labels = expected["required_labels_by_line"]
+    if plan["required_labels_by_line"] != expected_labels:
+        failures.append(
+            "required labels differed: expected "
+            f"{expected_labels}, observed {plan['required_labels_by_line']}"
+        )
+    expected_order = expected.get(
+        "stream_order",
+        [stream["id"] for stream in case["technical_streams"]],
+    )
+    observed_order = [item["stream_id"] for item in plan["stream_order"]]
+    if observed_order != expected_order:
+        failures.append(
+            f"expected stream order {expected_order}, observed {observed_order}"
+        )
+    return {
+        "id": case["id"],
+        "kind": "structure_plan",
+        "description": case["description"],
+        "passed": not failures,
+        "failures": failures,
+        "observed": {
+            "mode": plan["mode"],
+            "required_labels_by_line": plan["required_labels_by_line"],
+            "stream_order": observed_order,
+        },
+    }
+
+
 def run_benchmark(benchmark_data):
     fixture = benchmark_data["fixture"]
-    results = [
+    evidence_results = [
         evaluate_case(case, fixture["source_text"], fixture["evidence_graph"])
         for case in benchmark_data["cases"]
     ]
+    structure_results = [
+        evaluate_structure_case(case)
+        for case in benchmark_data.get("structure_cases", [])
+    ]
+    results = [*evidence_results, *structure_results]
     passed = sum(result["passed"] for result in results)
     return {
         "name": benchmark_data["name"],
@@ -202,15 +261,23 @@ def render_benchmark(result):
             "",
             f"{'PASS' if case['passed'] else 'FAIL'}: {case['id']}",
             case["description"],
-            (
+        ])
+        if case["kind"] == "structure_plan":
+            lines.append(
+                "Observed: "
+                f"mode={observed['mode']}, "
+                f"labels={observed['required_labels_by_line']}, "
+                f"order={observed['stream_order']}"
+            )
+        else:
+            lines.append(
                 "Observed: "
                 f"draft={observed['can_draft']}, "
                 f"blocked={observed['blocked_lines']}, "
                 f"year={observed['claimed_tax_year'] or 'missing'}, "
                 f"sequences={observed['accepted_sequences']}, "
                 f"rejected_sequences={observed['rejected_sequences']}"
-            ),
-        ])
+            )
         lines.extend(f"Failure: {failure}" for failure in case["failures"])
     return "\n".join(lines)
 

@@ -1464,6 +1464,87 @@ def assess_evidence_graph(graph):
     }
 
 
+def build_evidence_structure_plan(graph):
+    streams = graph["technical_streams"]
+    sequences = graph["investigation_sequences"]
+    sequences_by_stream = {}
+    for sequence in sequences:
+        sequences_by_stream.setdefault(sequence["stream_id"], []).append(sequence)
+
+    shared_categories = sorted({
+        item["category"]
+        for item in graph["evidence_items"]
+        if item["stream_id"] == GLOBAL_STREAM_ID
+        and item["category"]
+        in {
+            "objective",
+            "existing_knowledge",
+            "standard_practice_limit",
+            "supporting_record",
+        }
+        and (
+            "certainty" not in item
+            or evidence_item_supports_requirement(item, item["category"])
+        )
+    })
+    multiple_streams = len(streams) > 1
+    multiple_sequences = len(sequences) > 1
+
+    if not multiple_streams and not multiple_sequences:
+        mode = "integrated_narrative"
+        rationale = (
+            "One validated technical uncertainty and one systematic investigation can "
+            "be presented as a single causal narrative."
+        )
+    elif multiple_streams and shared_categories:
+        mode = "hybrid"
+        rationale = (
+            "Shared starting context applies across multiple technical uncertainties, "
+            "so the report should state that context once and separate each TU and SIS."
+        )
+    elif multiple_streams:
+        mode = "split_by_uncertainty_stream"
+        rationale = (
+            "The validated evidence contains multiple technical uncertainties with "
+            "distinct investigation chains, so each TU and its SIS should be separated."
+        )
+    else:
+        mode = "hybrid"
+        rationale = (
+            "One technical uncertainty contains multiple validated investigation chains, "
+            "so common context should be stated once and each SIS presented separately."
+        )
+
+    stream_ids = [stream["id"] for stream in streams]
+    sequence_ids = [sequence["id"] for sequence in sequences]
+    required_labels = {"242": [], "244": [], "246": []}
+    if multiple_streams:
+        required_labels["242"] = stream_ids
+        required_labels["244"] = sequence_ids
+        required_labels["246"] = stream_ids
+    elif multiple_sequences:
+        required_labels["244"] = sequence_ids
+        required_labels["246"] = sequence_ids
+
+    return {
+        "mode": mode,
+        "rationale": rationale,
+        "shared_context_categories": shared_categories,
+        "stream_order": [
+            {
+                "stream_id": stream["id"],
+                "title": stream["title"],
+                "sequence_ids": [
+                    sequence["id"]
+                    for sequence in sequences_by_stream.get(stream["id"], [])
+                ],
+            }
+            for stream in streams
+        ],
+        "required_labels_by_line": required_labels,
+    }
+
+
 def build_category_index(evidence_items):
     index = {}
     for item in evidence_items:

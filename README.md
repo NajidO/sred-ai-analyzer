@@ -165,12 +165,18 @@ evidence is complete:
    coherent audited SIS chain for Lines 244 and 246. It blocks contradictory, future,
    unattributed, routine, disconnected, or incomplete evidence and generates targeted
    questions instead of a partial report.
-4. Grounded drafting runs only after every line passes. The model must cite evidence
+4. A deterministic structure planner selects integrated, split-stream, or hybrid
+   presentation from the validated TU/SIS topology. Multi-stream and multi-sequence
+   plans define required line-specific TU/SIS labels and ordering.
+5. Grounded drafting runs only after every line passes. The model must follow the
+   structure plan and cite evidence
    IDs for each line and for every sentence or standalone factual statement.
-5. A local post-draft audit rejects missing sentence maps, unknown or out-of-scope
+6. A local post-draft audit rejects the wrong structure mode, missing or reordered
+   TU/SIS sections, empty headings, claims placed under the wrong TU/SIS label,
+   cross-sequence evidence mixing, missing sentence maps, unknown or out-of-scope
    evidence IDs, missing category support, over-limit prose, and numeric facts not
    present in the client source.
-6. An independent grounding call checks every drafted claim against exactly its cited
+7. An independent grounding call checks every drafted claim against exactly its cited
    evidence. Any ambiguous, unsupported, omitted, or incompletely reviewed claim causes
    all T661 prose to be withheld.
 
@@ -271,8 +277,9 @@ controls. They do not call an OpenAI model and do not establish legal eligibilit
 See `benchmarks/BENCHMARK_FINDINGS.md` for the baseline failures, fixes, current
 results, and limits of the evaluation.
 
-The semantic evidence gate has a separate 11-case benchmark for claimed-year grounding,
-SIS linkage, chronology, attribution, future work, and contradictions:
+The semantic evidence layer has a separate 16-case benchmark for claimed-year grounding,
+SIS linkage, chronology, attribution, future work, contradictions, and evidence-driven
+integrated, split-stream, and hybrid structure selection:
 
 ```bash
 venv/bin/python src/run_semantic_evidence_benchmark.py
@@ -308,7 +315,7 @@ T661 project description checks: PASS
 Report strategy planner checks: PASS
 Semantic evidence-agent checks: PASS
 T661 capability benchmark: 29/29
-Semantic evidence gate benchmark: 11/11
+Semantic evidence and structure benchmark: 16/16
 Incomplete intake gaps detected: 10/10
 Incomplete intake T661 drafts generated: 0
 Complete questionnaire T661 drafting: PASS

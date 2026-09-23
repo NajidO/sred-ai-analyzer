@@ -13,6 +13,7 @@ from evidence_agent import (
     LINE_REQUIREMENTS,
     apply_evidence_audit,
     assess_evidence_graph,
+    build_evidence_structure_plan,
     build_stream_summaries,
     evidence_item_supports_requirement,
     request_evidence_graph,
@@ -317,10 +318,13 @@ calculate measurements, dates, tests, records, results, causal explanations, or
 conclusions. Stream titles are organizational labels, not evidence. Preserve material
 qualifications and unsuccessful results.
 
-Choose an integrated, split-stream, or hybrid structure based on the actual evidence.
-When separate uncertainties have different hypotheses or investigations, use TU1,
-TU2, SIS1, SIS2, and corresponding advancement labels inside the relevant line.
-Avoid duplicating common facts across streams.
+Follow the supplied EVIDENCE-DRIVEN STRUCTURE PLAN exactly. Return its mode as
+structure_mode. Include every required line-specific TU or SIS label as a visible
+standalone Markdown heading such as `### TU1` or `### SIS1 - approach`, preserve the
+supplied order, and avoid duplicating common facts across streams. Structural headings
+are not factual claims and must not receive claim_support entries. Put substantive,
+grounded content beneath every required heading, and use only that TU or SIS chain's
+evidence in its section. Explain the plan in structure_rationale without adding facts.
 
 Use the validated investigation_sequences as the causal backbone for Lines 244 and
 246. Do not combine a hypothesis from one sequence with the work, result, conclusion,
@@ -413,6 +417,7 @@ def build_model_input(context):
 
 
 def build_grounded_draft_input(context, graph, readiness):
+    structure_plan = build_evidence_structure_plan(graph)
     drafting_graph = {
         "claimed_tax_year": graph["claimed_tax_year"],
         "claimed_tax_year_source_quote": graph["claimed_tax_year_source_quote"],
@@ -428,6 +433,8 @@ def build_grounded_draft_input(context, graph, readiness):
         f"{json.dumps(drafting_graph, indent=2, sort_keys=True)}\n\n"
         "LOCAL READINESS DECISION\n"
         f"{json.dumps(readiness, indent=2, sort_keys=True)}\n\n"
+        "EVIDENCE-DRIVEN STRUCTURE PLAN\n"
+        f"{json.dumps(structure_plan, indent=2, sort_keys=True)}\n\n"
         "SOURCE USE RULE\n"
         "Draft only from accepted evidence items above. The original source is retained "
         "locally for post-draft verification and is not a license to add uncited facts."
@@ -757,6 +764,7 @@ def build_evidence_agent_report(
     audit_failure=None,
     audit_failure_stage=None,
 ):
+    structure_plan = build_evidence_structure_plan(graph)
     evidence_audit_complete = graph["validation"].get("semantic_audit_passed") is True
     grounding_audit_complete = False
     if draft_payload is not None and grounding_audit is not None:
@@ -786,49 +794,15 @@ def build_evidence_agent_report(
             "The extracted evidence could not pass the independent semantic audit, so "
             f"readiness and T661 drafting were withheld: {evidence_audit_failure}"
         )
-        structure_mode = (
-            "split_by_uncertainty_stream"
-            if len(graph["technical_streams"]) > 1
-            else "integrated_narrative"
-        )
-        structure_rationale = (
-            "No report structure is released until every extracted evidence item is "
-            "accounted for by the semantic audit."
-        )
     elif audit_failure:
         overall_assessment = (
             "The validated evidence is complete enough for grounded drafting, but the "
             f"generated draft was withheld by the post-draft audit: {audit_failure}"
         )
-        structure_mode = (
-            draft_payload["structure_mode"]
-            if draft_payload
-            else "split_by_uncertainty_stream"
-            if len(graph["technical_streams"]) > 1
-            else "integrated_narrative"
-        )
-        structure_rationale = (
-            draft_payload["structure_rationale"]
-            if draft_payload
-            else "The generated draft was withheld before its proposed structure could be released."
-        )
     elif draft_payload:
         overall_assessment = draft_payload["overall_assessment"]
-        structure_mode = draft_payload["structure_mode"]
-        structure_rationale = draft_payload["structure_rationale"]
     else:
         overall_assessment = build_readiness_summary(readiness)
-        structure_mode = (
-            "split_by_uncertainty_stream"
-            if len(graph["technical_streams"]) > 1
-            else "integrated_narrative"
-        )
-        structure_rationale = (
-            "Separate TU/SIS treatment is clearer because the validated graph contains "
-            f"{len(graph['technical_streams'])} technical uncertainty streams."
-            if len(graph["technical_streams"]) > 1
-            else "The validated graph contains one technical uncertainty stream."
-        )
 
     factual_risks = []
     for item in graph["validation"].get("rejected_items", []):
@@ -863,6 +837,9 @@ def build_evidence_agent_report(
         factual_risks.insert(0, "Draft audit failure: " + audit_failure)
     if draft_payload:
         factual_risks.extend(draft_payload["factual_risks"])
+
+    structure_mode = structure_plan["mode"]
+    structure_rationale = structure_plan["rationale"]
 
     review_notes = [
         "Every accepted evidence item was matched to an exact contiguous source quote.",
@@ -899,6 +876,7 @@ def build_evidence_agent_report(
         ),
         "structure_mode": structure_mode,
         "structure_rationale": structure_rationale,
+        "structure_plan": structure_plan,
         "drafting_decision": "draft_ready" if draft_ready else "needs_more_information",
         "section_assessments": build_section_assessments(readiness),
         "technical_streams": build_stream_summaries(graph, readiness),
@@ -981,6 +959,8 @@ def build_evidence_agent_report(
 
 def normalize_grounded_draft(payload, source_text, graph, readiness):
     validate_grounded_draft_payload(payload)
+    structure_plan = build_evidence_structure_plan(graph)
+    validate_draft_structure(payload, structure_plan)
     evidence_index = {item["id"]: item for item in graph["evidence_items"]}
     support_by_line = {
         item["line_number"]: item
@@ -990,7 +970,6 @@ def normalize_grounded_draft(payload, source_text, graph, readiness):
         raise ValueError("The draft must provide one support map for each T661 line.")
 
     validate_claim_support(payload, support_by_line, evidence_index)
-
     for line_number in ("242", "244", "246"):
         draft = str(payload[f"line_{line_number}"]).strip()
         if not draft:
@@ -1015,6 +994,14 @@ def normalize_grounded_draft(payload, source_text, graph, readiness):
             graph["technical_streams"],
             graph["investigation_sequences"],
         )
+
+    validate_structured_claim_support(
+        payload,
+        structure_plan,
+        graph,
+        evidence_index,
+        support_by_line,
+    )
 
     generated_text = "\n".join(
         payload[f"line_{line_number}"]
@@ -1094,11 +1081,77 @@ def validate_grounded_draft_payload(payload):
             raise ValueError(f"Every grounded draft {field} item must be a string.")
 
 
+def validate_draft_structure(payload, structure_plan):
+    if payload["structure_mode"] != structure_plan["mode"]:
+        raise ValueError(
+            "The grounded draft ignored the evidence-driven structure mode: expected "
+            f"{structure_plan['mode']}, received {payload['structure_mode']}."
+        )
+    if not payload["structure_rationale"].strip():
+        raise ValueError("The grounded draft returned no structure rationale.")
+
+    for line_number, required_labels in structure_plan[
+        "required_labels_by_line"
+    ].items():
+        draft = payload[f"line_{line_number}"]
+        sections, missing = find_structure_sections(draft, required_labels)
+        if missing:
+            raise ValueError(
+                f"Line {line_number} omitted required Markdown structure headings: "
+                + ", ".join(missing)
+                + "."
+            )
+        positions = [sections[label]["heading_start"] for label in required_labels]
+        if positions != sorted(positions):
+            raise ValueError(
+                f"Line {line_number} did not preserve the required TU/SIS order."
+            )
+
+
+def find_structure_sections(draft, required_labels):
+    sections = {}
+    missing = []
+    matches = []
+    for label in required_labels:
+        match = re.search(
+            rf"(?:^|\n)\s*#{{1,6}}\s+{re.escape(label)}"
+            r"(?=$|[\s:/-])",
+            draft,
+            re.IGNORECASE,
+        )
+        if match is None:
+            missing.append(label)
+        else:
+            matches.append((label, match))
+
+    ordered_matches = sorted(matches, key=lambda item: item[1].start())
+    for index, (label, match) in enumerate(ordered_matches):
+        heading_end = draft.find("\n", match.end())
+        content_start = len(draft) if heading_end < 0 else heading_end + 1
+        content_end = (
+            ordered_matches[index + 1][1].start()
+            if index + 1 < len(ordered_matches)
+            else len(draft)
+        )
+        sections[label] = {
+            "heading_start": match.start(),
+            "content_start": content_start,
+            "content_end": content_end,
+        }
+        if not draft[content_start:content_end].strip():
+            raise ValueError(
+                f"Structure heading {label} contained no substantive section content."
+            )
+    return sections, missing
+
+
 def split_draft_claims(draft):
     claims = []
     for block in re.split(r"\n+", str(draft)):
         block = block.strip()
         if not block:
+            continue
+        if is_structure_heading(block):
             continue
         start = 0
         for match in re.finditer(r"[.!?](?=\s+[A-Z0-9]|$)", block):
@@ -1114,6 +1167,15 @@ def split_draft_claims(draft):
     return claims
 
 
+def is_structure_heading(block):
+    return bool(re.fullmatch(
+        r"(?:#{1,6}\s+(?:TU|SIS)\d+(?:\s*(?:[-:/]\s*|for\s+).*)?"
+        r"|(?:TU|SIS)\d+)",
+        str(block).strip(),
+        re.IGNORECASE,
+    ))
+
+
 def validate_claim_support(payload, support_by_line, evidence_index):
     claims_by_line = {line_number: [] for line_number in ("242", "244", "246")}
     for claim in payload["claim_support"]:
@@ -1123,6 +1185,10 @@ def validate_claim_support(payload, support_by_line, evidence_index):
         if claim_text not in draft:
             raise ValueError(
                 f"Claim {claim['claim_id']} is not an exact substring of Line {line_number}."
+            )
+        if draft.count(claim_text) != 1:
+            raise ValueError(
+                f"Claim {claim['claim_id']} must occur exactly once in Line {line_number}."
             )
         unknown_ids = sorted(set(claim["evidence_ids"]) - set(evidence_index))
         if unknown_ids:
@@ -1158,6 +1224,124 @@ def validate_claim_support(payload, support_by_line, evidence_index):
                 f"Line {line_number} claim support must map every sentence exactly once"
                 + (": " + "; ".join(details) if details else ".")
             )
+
+
+def validate_structured_claim_support(
+    payload,
+    structure_plan,
+    graph,
+    evidence_index,
+    support_by_line,
+):
+    sequence_index = {
+        sequence["id"]: sequence
+        for sequence in graph["investigation_sequences"]
+    }
+    sequences_by_stream = {}
+    for sequence in graph["investigation_sequences"]:
+        sequences_by_stream.setdefault(sequence["stream_id"], []).append(sequence)
+
+    for line_number, labels in structure_plan["required_labels_by_line"].items():
+        if not labels:
+            continue
+        draft = payload[f"line_{line_number}"]
+        sections, missing = find_structure_sections(draft, labels)
+        if missing:
+            continue
+        line_claims = [
+            claim
+            for claim in payload["claim_support"]
+            if claim["line_number"] == line_number
+        ]
+        line_support_ids = set(support_by_line[line_number]["evidence_ids"])
+
+        for label in labels:
+            section = sections[label]
+            section_claims = [
+                claim
+                for claim in line_claims
+                if section["content_start"]
+                <= draft.find(claim["claim_text"])
+                < section["content_end"]
+            ]
+            if not section_claims:
+                raise ValueError(
+                    f"Structure section {label} in Line {line_number} contained no "
+                    "grounded factual claim."
+                )
+            section_evidence_ids = {
+                evidence_id
+                for claim in section_claims
+                for evidence_id in claim["evidence_ids"]
+            }
+
+            if line_number == "242":
+                for category in LINE_REQUIREMENTS["242"]:
+                    global_support = any(
+                        evidence_index[evidence_id]["stream_id"] == "GLOBAL"
+                        and evidence_index[evidence_id]["category"] == category
+                        and evidence_item_supports_requirement(
+                            evidence_index[evidence_id],
+                            category,
+                        )
+                        for evidence_id in line_support_ids
+                    )
+                    if global_support:
+                        continue
+                    section_support = any(
+                        evidence_index[evidence_id]["stream_id"] == label
+                        and evidence_index[evidence_id]["category"] == category
+                        and evidence_item_supports_requirement(
+                            evidence_index[evidence_id],
+                            category,
+                        )
+                        for evidence_id in section_evidence_ids
+                    )
+                    if not section_support:
+                        raise ValueError(
+                            f"Line 242 section {label} omitted grounded {category} evidence."
+                        )
+            elif line_number == "244":
+                sequence = sequence_index[label]
+                expected_ids = {
+                    evidence_id
+                    for field in (
+                        "hypothesis_evidence_ids",
+                        "experiment_evidence_ids",
+                        "result_evidence_ids",
+                        "conclusion_evidence_ids",
+                    )
+                    for evidence_id in sequence[field]
+                }
+                missing_ids = sorted(expected_ids - section_evidence_ids)
+                if missing_ids:
+                    raise ValueError(
+                        f"Line 244 section {label} omitted its sequence evidence: "
+                        + ", ".join(missing_ids)
+                        + "."
+                    )
+            elif label in sequence_index:
+                expected_ids = set(sequence_index[label]["advancement_evidence_ids"])
+                missing_ids = sorted(expected_ids - section_evidence_ids)
+                if missing_ids:
+                    raise ValueError(
+                        f"Line 246 section {label} omitted its advancement evidence: "
+                        + ", ".join(missing_ids)
+                        + "."
+                    )
+            else:
+                expected_ids = {
+                    evidence_id
+                    for sequence in sequences_by_stream.get(label, [])
+                    for evidence_id in sequence["advancement_evidence_ids"]
+                }
+                missing_ids = sorted(expected_ids - section_evidence_ids)
+                if missing_ids:
+                    raise ValueError(
+                        f"Line 246 section {label} omitted linked advancement evidence: "
+                        + ", ".join(missing_ids)
+                        + "."
+                    )
 
 
 def validate_grounding_audit_payload(payload, draft_payload):
@@ -1509,9 +1693,21 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
         "",
         "## Structure Decision",
         "",
-        f"**AI selection:** `{report['structure_mode']}`",
+        f"**Evidence-driven selection:** `{report['structure_mode']}`",
         "",
         report["structure_rationale"],
+    ])
+    structure_plan = report.get("structure_plan", {})
+    required_labels = structure_plan.get("required_labels_by_line", {})
+    if required_labels:
+        lines.extend(["", "**Required draft sections:**"])
+        for line_number in ("242", "244", "246"):
+            labels = required_labels.get(line_number, [])
+            lines.append(
+                f"- Line {line_number}: "
+                + (", ".join(labels) if labels else "Integrated narrative")
+            )
+    lines.extend([
         "",
         f"**Local planner selection:** `{local_strategy['selected_structure']['mode']}`",
     ])

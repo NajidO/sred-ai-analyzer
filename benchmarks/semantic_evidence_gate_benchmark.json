@@ -347,5 +347,102 @@
         "accepted_sequences": 1
       }
     }
+  ],
+  "structure_cases": [
+    {
+      "id": "single_tu_single_sis_structure",
+      "description": "One TU and one SIS should remain a concise integrated narrative.",
+      "technical_streams": [
+        {"id": "TU1", "title": "Observer stability"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS1", "stream_id": "TU1"}
+      ],
+      "expected": {
+        "mode": "integrated_narrative",
+        "required_labels_by_line": {"242": [], "244": [], "246": []}
+      }
+    },
+    {
+      "id": "single_tu_multiple_sis_structure",
+      "description": "Multiple investigation paths under one uncertainty require separate SIS sections.",
+      "technical_streams": [
+        {"id": "TU1", "title": "Observer stability"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS1", "stream_id": "TU1"},
+        {"id": "SIS2", "stream_id": "TU1"}
+      ],
+      "expected": {
+        "mode": "hybrid",
+        "required_labels_by_line": {
+          "242": [],
+          "244": ["SIS1", "SIS2"],
+          "246": ["SIS1", "SIS2"]
+        }
+      }
+    },
+    {
+      "id": "two_distinct_tu_structure",
+      "description": "Distinct uncertainty streams without shared context require split TU/SIS sections.",
+      "technical_streams": [
+        {"id": "TU1", "title": "Observer stability"},
+        {"id": "TU2", "title": "Sensor reconstruction"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS1", "stream_id": "TU1"},
+        {"id": "SIS2", "stream_id": "TU2"}
+      ],
+      "expected": {
+        "mode": "split_by_uncertainty_stream",
+        "required_labels_by_line": {
+          "242": ["TU1", "TU2"],
+          "244": ["SIS1", "SIS2"],
+          "246": ["TU1", "TU2"]
+        }
+      }
+    },
+    {
+      "id": "two_tu_shared_context_structure",
+      "description": "Shared starting knowledge should be stated once before separate TU/SIS sections.",
+      "technical_streams": [
+        {"id": "TU1", "title": "Observer stability"},
+        {"id": "TU2", "title": "Sensor reconstruction"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS1", "stream_id": "TU1"},
+        {"id": "SIS2", "stream_id": "TU2"}
+      ],
+      "global_context_categories": ["existing_knowledge", "supporting_record"],
+      "expected": {
+        "mode": "hybrid",
+        "required_labels_by_line": {
+          "242": ["TU1", "TU2"],
+          "244": ["SIS1", "SIS2"],
+          "246": ["TU1", "TU2"]
+        }
+      }
+    },
+    {
+      "id": "preserve_extracted_stream_order",
+      "description": "The structure plan must preserve evidence-graph stream and sequence order.",
+      "technical_streams": [
+        {"id": "TU2", "title": "Sensor reconstruction"},
+        {"id": "TU1", "title": "Observer stability"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS2", "stream_id": "TU2"},
+        {"id": "SIS1", "stream_id": "TU1"}
+      ],
+      "expected": {
+        "mode": "split_by_uncertainty_stream",
+        "stream_order": ["TU2", "TU1"],
+        "required_labels_by_line": {
+          "242": ["TU2", "TU1"],
+          "244": ["SIS2", "SIS1"],
+          "246": ["TU2", "TU1"]
+        }
+      }
+    }
   ]
 }

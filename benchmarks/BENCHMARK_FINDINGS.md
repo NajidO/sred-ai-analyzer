@@ -154,13 +154,22 @@ against exactly its cited evidence. Any ambiguous, unsupported, missing, duplica
 partially reviewed claim causes all T661 prose to be withheld. Mocked end-to-end tests
 exercise these stages without making a paid API call.
 
-`semantic_evidence_gate_benchmark.json` adds eleven graph-level adversarial cases. They
+`semantic_evidence_gate_benchmark.json` adds eleven graph-level evidence-gate cases. They
 cover a complete chain, absent and mismatched tax years, disconnected evidence,
 mislabeled sequence links, future and third-party work, independently ambiguous
 chronology, an independently ambiguous reporting period, a rejected model-authored
 blocker, and a material contradiction. All eleven currently pass. This proves the local
 fail-closed behavior for those mutations;
 it does not prove that a live model will extract every relevant fact correctly.
+
+Five additional structure cases derive organization directly from validated topology:
+one TU/one SIS remains integrated; one TU with multiple SIS paths becomes hybrid;
+distinct TUs split; shared global context becomes hybrid; and extracted TU/SIS order is
+preserved. The post-draft validator requires the selected mode and line-specific labels,
+rejects missing, empty, or reversed sections, verifies that grounded claims sit beneath
+the TU/SIS heading assigned to their evidence, and prevents Line 244 support from
+combining partial links from different investigation sequences. All sixteen semantic
+evidence and structure cases currently pass.
 
 ## Remaining Limits
 

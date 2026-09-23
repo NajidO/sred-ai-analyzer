@@ -18,6 +18,7 @@ from evidence_mapper import map_to_sred_framework
 from evidence_agent import (
     apply_evidence_audit,
     assess_evidence_graph,
+    build_evidence_structure_plan,
     normalize_evidence_graph,
     validate_evidence_audit_payload,
 )
@@ -34,6 +35,10 @@ from llm_report_agent import (
     normalize_report_payload,
     render_llm_report,
     request_llm_report,
+    split_draft_claims,
+    validate_draft_structure,
+    validate_line_support,
+    validate_structured_claim_support,
 )
 from case_store import (
     list_case_files,
@@ -1135,6 +1140,196 @@ def validate_semantic_evidence_agent_layer():
         raise AssertionError("The evidence validator rejected a supported fixture item.")
     if not readiness["can_draft"]:
         raise AssertionError("A complete validated evidence graph was not draft-ready.")
+
+    topology_graph = {
+        "technical_streams": [
+            {"id": "TU1", "title": "Stream one"},
+            {"id": "TU2", "title": "Stream two"},
+        ],
+        "investigation_sequences": [
+            {"id": "SIS1", "stream_id": "TU1"},
+            {"id": "SIS2", "stream_id": "TU2"},
+        ],
+        "evidence_items": [],
+    }
+    split_plan = build_evidence_structure_plan(topology_graph)
+    if split_plan["mode"] != "split_by_uncertainty_stream":
+        raise AssertionError("Distinct TU/SIS streams did not select split structure.")
+    if split_plan["required_labels_by_line"] != {
+        "242": ["TU1", "TU2"],
+        "244": ["SIS1", "SIS2"],
+        "246": ["TU1", "TU2"],
+    }:
+        raise AssertionError("The split structure plan returned the wrong line labels.")
+
+    shared_topology = json.loads(json.dumps(topology_graph))
+    shared_topology["evidence_items"] = [{
+        "id": "E_SHARED",
+        "stream_id": "GLOBAL",
+        "category": "existing_knowledge",
+    }]
+    if build_evidence_structure_plan(shared_topology)["mode"] != "hybrid":
+        raise AssertionError("Shared multi-stream context did not select hybrid structure.")
+
+    multi_sequence_topology = {
+        "technical_streams": [{"id": "TU1", "title": "Stream one"}],
+        "investigation_sequences": [
+            {"id": "SIS1", "stream_id": "TU1"},
+            {"id": "SIS2", "stream_id": "TU1"},
+        ],
+        "evidence_items": [],
+    }
+    multi_sequence_plan = build_evidence_structure_plan(multi_sequence_topology)
+    if multi_sequence_plan["mode"] != "hybrid":
+        raise AssertionError("Multiple SIS chains in one TU did not select hybrid structure.")
+
+    structured_payload = {
+        "structure_mode": "split_by_uncertainty_stream",
+        "structure_rationale": "Separate validated streams require separate sections.",
+        "line_242": "### TU1\nFirst uncertainty.\n### TU2\nSecond uncertainty.",
+        "line_244": "### SIS1\nFirst investigation.\n### SIS2\nSecond investigation.",
+        "line_246": "### TU1\nFirst advancement.\n### TU2\nSecond advancement.",
+    }
+    validate_draft_structure(structured_payload, split_plan)
+    heading_claims = split_draft_claims(
+        "### SIS1 - Observer scheduling\n"
+        "The team tested the first schedule.\n"
+        "TU1: This prefixed sentence remains a factual claim."
+    )
+    if heading_claims != [
+        "The team tested the first schedule.",
+        "TU1: This prefixed sentence remains a factual claim.",
+    ]:
+        raise AssertionError("Structural headings were not separated from factual claims.")
+
+    missing_structure_label = json.loads(json.dumps(structured_payload))
+    missing_structure_label["line_244"] = "### SIS1\nFirst investigation."
+    try:
+        validate_draft_structure(missing_structure_label, split_plan)
+    except ValueError as exc:
+        if "omitted required Markdown structure headings: SIS2" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A multi-stream draft omitted a required SIS section.")
+
+    empty_structure_section = json.loads(json.dumps(structured_payload))
+    empty_structure_section["line_244"] = (
+        "### SIS1\n\n### SIS2\nSecond investigation."
+    )
+    try:
+        validate_draft_structure(empty_structure_section, split_plan)
+    except ValueError as exc:
+        if "SIS1 contained no substantive section content" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A required SIS heading contained no section content.")
+
+    reversed_structure = json.loads(json.dumps(structured_payload))
+    reversed_structure["line_242"] = (
+        "### TU2\nSecond uncertainty.\n### TU1\nFirst uncertainty."
+    )
+    try:
+        validate_draft_structure(reversed_structure, split_plan)
+    except ValueError as exc:
+        if "did not preserve the required TU/SIS order" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft reversed the evidence-driven stream order.")
+
+    wrong_structure_mode = json.loads(json.dumps(structured_payload))
+    wrong_structure_mode["structure_mode"] = "integrated_narrative"
+    try:
+        validate_draft_structure(wrong_structure_mode, split_plan)
+    except ValueError as exc:
+        if "ignored the evidence-driven structure mode" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft selected a structure that contradicted its graph.")
+
+    structured_evidence = []
+    structured_sequences = []
+    for sequence_number, stream_id in ((1, "TU1"), (2, "TU2")):
+        field_ids = {}
+        for category, field_prefix in (
+            ("hypothesis", "H"),
+            ("experiment_or_analysis", "X"),
+            ("result", "R"),
+            ("conclusion", "C"),
+        ):
+            evidence_id = f"E_{field_prefix}{sequence_number}"
+            field_ids[category] = evidence_id
+            structured_evidence.append({
+                "id": evidence_id,
+                "stream_id": stream_id,
+                "category": category,
+                "certainty": "explicit",
+                "tax_year_scope": "claimed_year",
+                "attribution": "claimant",
+            })
+        structured_sequences.append({
+            "id": f"SIS{sequence_number}",
+            "stream_id": stream_id,
+            "hypothesis_evidence_ids": [field_ids["hypothesis"]],
+            "experiment_evidence_ids": [field_ids["experiment_or_analysis"]],
+            "result_evidence_ids": [field_ids["result"]],
+            "conclusion_evidence_ids": [field_ids["conclusion"]],
+            "advancement_evidence_ids": [],
+        })
+    structured_claim_payload = {
+        "line_244": "### SIS1\nFirst chain.\n### SIS2\nSecond chain.",
+        "claim_support": [
+            {
+                "claim_id": "SC1",
+                "line_number": "244",
+                "claim_text": "First chain.",
+                "evidence_ids": ["E_H1", "E_X1", "E_R1", "E_C1"],
+            },
+            {
+                "claim_id": "SC2",
+                "line_number": "244",
+                "claim_text": "Second chain.",
+                "evidence_ids": ["E_H2", "E_X2", "E_R2", "E_C2"],
+            },
+        ],
+    }
+    line_244_only_plan = json.loads(json.dumps(split_plan))
+    line_244_only_plan["required_labels_by_line"]["242"] = []
+    line_244_only_plan["required_labels_by_line"]["246"] = []
+    structured_graph = {"investigation_sequences": structured_sequences}
+    structured_evidence_index = {
+        item["id"]: item for item in structured_evidence
+    }
+    structured_support = {
+        "244": {"evidence_ids": list(structured_evidence_index)}
+    }
+    validate_structured_claim_support(
+        structured_claim_payload,
+        line_244_only_plan,
+        structured_graph,
+        structured_evidence_index,
+        structured_support,
+    )
+    cross_labeled_claims = json.loads(json.dumps(structured_claim_payload))
+    cross_labeled_claims["claim_support"][0]["evidence_ids"] = [
+        "E_H2",
+        "E_X2",
+        "E_R2",
+        "E_C2",
+    ]
+    try:
+        validate_structured_claim_support(
+            cross_labeled_claims,
+            line_244_only_plan,
+            structured_graph,
+            structured_evidence_index,
+            structured_support,
+        )
+    except ValueError as exc:
+        if "Line 244 section SIS1 omitted its sequence evidence" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A SIS heading contained another sequence's grounded claims.")
+
     if graph["evidence_items"][0]["source_location"].startswith("fixture:"):
         raise AssertionError("A model-authored source location was trusted.")
     if not graph["evidence_items"][0]["source_location"].startswith(
@@ -1498,25 +1693,23 @@ def validate_semantic_evidence_agent_layer():
         "conclusion_evidence_ids": [cloned_ids["E8"]],
         "advancement_evidence_ids": ["E9"],
     })
-    mixed_sequence_draft = json.loads(json.dumps(draft_payload))
-    mixed_sequence_draft["draft_support"][1]["evidence_ids"] = [
+    mixed_sequence_ids = [
         "E5",
         "E12",
         "E13",
         "E14",
         "E10",
     ]
-    for claim, evidence_ids in zip(
-        mixed_sequence_draft["claim_support"][2:6],
-        (["E5"], ["E12"], ["E13"], ["E14"]),
-    ):
-        claim["evidence_ids"] = evidence_ids
     try:
-        normalize_grounded_draft(
-            mixed_sequence_draft,
-            source_text,
-            mixed_sequence_graph,
-            readiness,
+        validate_line_support(
+            "244",
+            mixed_sequence_ids,
+            {
+                item["id"]: item
+                for item in mixed_sequence_graph["evidence_items"]
+            },
+            mixed_sequence_graph["technical_streams"],
+            mixed_sequence_graph["investigation_sequences"],
         )
     except ValueError as exc:
         if "without citing one complete validated investigation sequence" not in str(exc):
@@ -1621,6 +1814,10 @@ def validate_semantic_evidence_agent_layer():
         "sred-grounding-audit-v1",
     ]:
         raise AssertionError("The semantic agent stages ran in the wrong order.")
+    if "EVIDENCE-DRIVEN STRUCTURE PLAN" not in fake_client.responses.requests[2][
+        "input"
+    ]:
+        raise AssertionError("The drafting stage did not receive the validated structure plan.")
     if end_to_end_report["evidence_audit"] != evidence_audit:
         raise AssertionError("The independent evidence audit was not retained in the report.")
     if end_to_end_report["grounding_audit"] != grounding_audit:
@@ -1636,6 +1833,9 @@ def validate_semantic_evidence_agent_layer():
         "Evidence items reviewed: 10",
         "Claimed tax year: `supported`",
         "Investigation sequences reviewed: 1",
+        "**Evidence-driven selection:** `integrated_narrative`",
+        "**Required draft sections:**",
+        "Line 244: Integrated narrative",
         "## Claim-Level Grounding",
         "Independent audit: `supported`",
         "Source location: line 1, column 1, characters 0-",
@@ -1793,6 +1993,7 @@ def validate_semantic_evidence_agent_layer():
     print("PASS: validated exact source quotes and rejected fabricated evidence")
     print("PASS: derived exact source locations and rejected ambiguous repeated quotes")
     print("PASS: required a grounded tax year and coherent audited SIS sequences")
+    print("PASS: derived and enforced evidence-driven TU/SIS report structure")
     print("PASS: rejected unsupported normalized and drafted numeric facts")
     print("PASS: excluded inferred claims and rejected stream-specific GLOBAL evidence")
     print("PASS: excluded future work from the claimed-year evidence gate")
