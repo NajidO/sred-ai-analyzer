@@ -15,7 +15,12 @@ from capability_eval import evaluate_expected_gaps
 from case_manager import build_resumed_description, inspect_case, list_cases, resume_case
 from cra_guideline_checker import check_against_cra_guidelines
 from evidence_mapper import map_to_sred_framework
-from evidence_agent import assess_evidence_graph, normalize_evidence_graph
+from evidence_agent import (
+    apply_evidence_audit,
+    assess_evidence_graph,
+    normalize_evidence_graph,
+    validate_evidence_audit_payload,
+)
 from explanation import generate_label_explanation
 from grounding import find_source_quote_locations, format_source_location
 from intake_agent import build_updated_description, select_intake_questions
@@ -41,6 +46,9 @@ from rules import extract_signals
 from report_strategy import build_report_strategy
 from responses_http_client import ResponsesHTTPClient
 from run_capability_benchmark import run_benchmark
+from run_semantic_evidence_benchmark import (
+    run_benchmark as run_semantic_evidence_benchmark,
+)
 from technical_report import (
     T661_LINE_WORD_LIMITS,
     assess_report_readiness,
@@ -65,6 +73,9 @@ BENCHMARK_PATHS = [
     BASE_DIR / "benchmarks" / "t661_holdout_benchmark.json",
     BASE_DIR / "benchmarks" / "t661_adversarial_benchmark.json",
 ]
+SEMANTIC_EVIDENCE_BENCHMARK_PATH = (
+    BASE_DIR / "benchmarks" / "semantic_evidence_gate_benchmark.json"
+)
 
 
 def validate_training_csv():
@@ -920,6 +931,19 @@ def build_semantic_evidence_fixture():
             }
             for index, (item_id, category, quote, fact) in enumerate(evidence, start=1)
         ],
+        "investigation_sequences": [
+            {
+                "id": "observer_sis",
+                "stream_id": "control_stream",
+                "title": "Observer bandwidth scheduling",
+                "uncertainty_evidence_ids": ["u1"],
+                "hypothesis_evidence_ids": ["h1"],
+                "experiment_evidence_ids": ["x1"],
+                "result_evidence_ids": ["r1"],
+                "conclusion_evidence_ids": ["c1"],
+                "advancement_evidence_ids": ["a1"],
+            }
+        ],
         "contradictions": [],
         "routine_work": [],
         "attribution_issues": [],
@@ -1006,6 +1030,10 @@ def build_evidence_audit_fixture(
     graph,
     rejected_evidence_id=None,
     rejected_dimension="category",
+    rejected_sequence_id=None,
+    rejected_sequence_dimension="relationship",
+    rejected_issue_id=None,
+    tax_year_verdict=None,
     contradictions=None,
 ):
     dimensions = (
@@ -1027,13 +1055,49 @@ def build_evidence_audit_fixture(
             audit[rejected_dimension] = "unsupported"
             audit["reason"] = "The source does not support this semantic classification."
         item_audits.append(audit)
+    sequence_audits = []
+    for sequence in graph["investigation_sequences"]:
+        audit = {
+            "sequence_id": sequence["id"],
+            "relationship": "supported",
+            "chronology": "supported",
+            "reason": "The source supports the sequence relationship and chronology.",
+        }
+        if sequence["id"] == rejected_sequence_id:
+            audit[rejected_sequence_dimension] = "ambiguous"
+            audit["reason"] = "The source does not establish this sequence linkage."
+        sequence_audits.append(audit)
+    if tax_year_verdict is None:
+        tax_year_verdict = "supported" if graph["claimed_tax_year"] else "unsupported"
+    issue_audits = []
+    for issue in [*graph["routine_work"], *graph["attribution_issues"]]:
+        rejected = issue["id"] == rejected_issue_id
+        issue_audits.append({
+            "issue_id": issue["id"],
+            "verdict": "unsupported" if rejected else "supported",
+            "reason": (
+                "The quote does not support the extracted blocker interpretation."
+                if rejected
+                else "The source supports the extracted blocker interpretation."
+            ),
+        })
     return {
         "overall_assessment": (
             "One evidence item has an unsupported semantic classification."
             if rejected_evidence_id
             else "Every evidence item is semantically supported by the source."
         ),
+        "claimed_tax_year_audit": {
+            "verdict": tax_year_verdict,
+            "reason": (
+                "The quoted source establishes the claimed tax year."
+                if tax_year_verdict == "supported"
+                else "The source does not establish a unique claimed tax year."
+            ),
+        },
         "item_audits": item_audits,
+        "sequence_audits": sequence_audits,
+        "issue_audits": issue_audits,
         "discovered_contradictions": contradictions or [],
     }
 
@@ -1125,6 +1189,138 @@ def validate_semantic_evidence_agent_layer():
         for note in duplicate_year_graph["extraction_notes"]
     ):
         raise AssertionError("A rejected claimed tax year was not explained.")
+
+    missing_year_payload = json.loads(json.dumps(raw_graph))
+    missing_year_payload["claimed_tax_year"] = ""
+    missing_year_payload["claimed_tax_year_source_quote"] = ""
+    missing_year_graph = normalize_evidence_graph(missing_year_payload, source_text)
+    missing_year_readiness = assess_evidence_graph(missing_year_graph)
+    if missing_year_readiness["can_draft"] or set(
+        missing_year_readiness["blocked_lines"]
+    ) != {"242", "244", "246"}:
+        raise AssertionError("An absent claimed tax year did not block every T661 line.")
+    if not any(
+        item["category"] == "claimed_tax_year"
+        for item in missing_year_readiness["follow_up_questions"]
+    ):
+        raise AssertionError("A missing claimed tax year produced no targeted question.")
+
+    mismatched_year_payload = json.loads(json.dumps(raw_graph))
+    mismatched_year_payload["claimed_tax_year"] = "2026"
+    mismatched_year_graph = normalize_evidence_graph(
+        mismatched_year_payload,
+        source_text,
+    )
+    if mismatched_year_graph["claimed_tax_year"]:
+        raise AssertionError("A claimed year absent from its source quote was accepted.")
+
+    disconnected_payload = json.loads(json.dumps(raw_graph))
+    disconnected_payload["investigation_sequences"] = []
+    disconnected_graph = normalize_evidence_graph(disconnected_payload, source_text)
+    disconnected_readiness = assess_evidence_graph(disconnected_graph)
+    if disconnected_readiness["sections"]["242"]["status"] != "ready":
+        raise AssertionError("A missing SIS chain incorrectly blocked supported Line 242.")
+    if any(
+        disconnected_readiness["sections"][line]["status"] == "ready"
+        for line in ("244", "246")
+    ):
+        raise AssertionError("An unordered evidence bag satisfied Lines 244 or 246.")
+    if not any(
+        item["category"] == "investigation_sequence"
+        for item in disconnected_readiness["follow_up_questions"]
+    ):
+        raise AssertionError("A missing SIS chain produced no sequence-specific question.")
+
+    invalid_sequence_payload = json.loads(json.dumps(raw_graph))
+    invalid_sequence_payload["investigation_sequences"][0][
+        "result_evidence_ids"
+    ] = ["h1"]
+    invalid_sequence_graph = normalize_evidence_graph(
+        invalid_sequence_payload,
+        source_text,
+    )
+    if invalid_sequence_graph["investigation_sequences"]:
+        raise AssertionError("A sequence with a hypothesis mislabeled as a result passed.")
+    if not invalid_sequence_graph["validation"]["rejected_sequences"]:
+        raise AssertionError("An invalid investigation sequence was not explained.")
+
+    sequence_audit = build_evidence_audit_fixture(
+        graph,
+        rejected_sequence_id="SIS1",
+        rejected_sequence_dimension="chronology",
+    )
+    validate_evidence_audit_payload(sequence_audit, graph)
+    sequence_audited_graph = apply_evidence_audit(graph, sequence_audit)
+    sequence_audited_readiness = assess_evidence_graph(sequence_audited_graph)
+    if sequence_audited_graph["investigation_sequences"]:
+        raise AssertionError("A chronology-rejected SIS chain remained available.")
+    if any(
+        sequence_audited_readiness["sections"][line]["status"] == "ready"
+        for line in ("244", "246")
+    ):
+        raise AssertionError("A chronology-rejected SIS chain still supported drafting.")
+
+    tax_year_audit = build_evidence_audit_fixture(
+        graph,
+        tax_year_verdict="ambiguous",
+    )
+    validate_evidence_audit_payload(tax_year_audit, graph)
+    tax_year_audited_graph = apply_evidence_audit(graph, tax_year_audit)
+    if tax_year_audited_graph["claimed_tax_year"]:
+        raise AssertionError("A semantically ambiguous claimed tax year remained accepted.")
+    if assess_evidence_graph(tax_year_audited_graph)["can_draft"]:
+        raise AssertionError("An ambiguous claimed tax year did not block drafting.")
+
+    omitted_sequence_audit = build_evidence_audit_fixture(graph)
+    omitted_sequence_audit["sequence_audits"] = []
+    try:
+        validate_evidence_audit_payload(omitted_sequence_audit, graph)
+    except ValueError as exc:
+        if "omitted investigation sequence IDs" not in str(exc):
+            raise
+    else:
+        raise AssertionError("An audit that omitted an SIS chain passed validation.")
+
+    unsupported_issue_payload = json.loads(json.dumps(raw_graph))
+    unsupported_issue_payload["attribution_issues"] = [{
+        "source_quote": raw_graph["evidence_items"][5]["source_quote"],
+        "description": "The source allegedly leaves the performing party unclear.",
+        "blocks_lines": ["244"],
+    }]
+    unsupported_issue_graph = normalize_evidence_graph(
+        unsupported_issue_payload,
+        source_text,
+    )
+    if assess_evidence_graph(unsupported_issue_graph)["sections"]["244"][
+        "status"
+    ] != "needs_more_information":
+        raise AssertionError("An extracted attribution issue did not block its line.")
+    issue_audit = build_evidence_audit_fixture(
+        unsupported_issue_graph,
+        rejected_issue_id="A1",
+    )
+    validate_evidence_audit_payload(issue_audit, unsupported_issue_graph)
+    issue_audited_graph = apply_evidence_audit(
+        unsupported_issue_graph,
+        issue_audit,
+    )
+    if issue_audited_graph["attribution_issues"]:
+        raise AssertionError("An unsupported extracted blocker survived its audit.")
+    if not assess_evidence_graph(issue_audited_graph)["can_draft"]:
+        raise AssertionError("A rejected false blocker continued to withhold drafting.")
+
+    omitted_issue_audit = build_evidence_audit_fixture(unsupported_issue_graph)
+    omitted_issue_audit["issue_audits"] = []
+    try:
+        validate_evidence_audit_payload(
+            omitted_issue_audit,
+            unsupported_issue_graph,
+        )
+    except ValueError as exc:
+        if "omitted extracted issue IDs" not in str(exc):
+            raise
+    else:
+        raise AssertionError("An audit that omitted an extracted blocker passed.")
 
     prior_knowledge = json.loads(json.dumps(raw_graph))
     prior_knowledge["evidence_items"][1]["tax_year_scope"] = "prior_year"
@@ -1226,6 +1422,18 @@ def validate_semantic_evidence_agent_layer():
     if unaudited_report["t661_lines"]:
         raise AssertionError("The report builder retained unaudited T661 prose.")
 
+    blocked_builder_report = build_evidence_agent_report(
+        tax_year_audited_graph,
+        assess_evidence_graph(tax_year_audited_graph),
+        draft_payload=draft_payload,
+        evidence_audit=tax_year_audit,
+        grounding_audit=build_grounding_audit_fixture(draft_payload),
+    )
+    if blocked_builder_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("The report builder bypassed a blocked readiness decision.")
+    if blocked_builder_report["t661_lines"]:
+        raise AssertionError("The report builder released prose after a blocked gate.")
+
     unsupported_draft = json.loads(json.dumps(draft_payload))
     unsupported_draft["line_246"] += " The final error was 0.2%."
     unsupported_draft["claim_support"].append({
@@ -1262,6 +1470,59 @@ def validate_semantic_evidence_agent_layer():
             raise
     else:
         raise AssertionError("A draft support map missing result evidence passed the audit.")
+
+    mixed_sequence_graph = json.loads(json.dumps(graph))
+    cloned_ids = {}
+    for source_id, cloned_id in zip(
+        ("E5", "E6", "E7", "E8"),
+        ("E11", "E12", "E13", "E14"),
+    ):
+        clone = json.loads(json.dumps(
+            next(
+                item
+                for item in mixed_sequence_graph["evidence_items"]
+                if item["id"] == source_id
+            )
+        ))
+        clone["id"] = cloned_id
+        mixed_sequence_graph["evidence_items"].append(clone)
+        cloned_ids[source_id] = cloned_id
+    mixed_sequence_graph["investigation_sequences"].append({
+        "id": "SIS2",
+        "stream_id": "TU1",
+        "title": "Second observer investigation",
+        "uncertainty_evidence_ids": ["E4"],
+        "hypothesis_evidence_ids": [cloned_ids["E5"]],
+        "experiment_evidence_ids": [cloned_ids["E6"]],
+        "result_evidence_ids": [cloned_ids["E7"]],
+        "conclusion_evidence_ids": [cloned_ids["E8"]],
+        "advancement_evidence_ids": ["E9"],
+    })
+    mixed_sequence_draft = json.loads(json.dumps(draft_payload))
+    mixed_sequence_draft["draft_support"][1]["evidence_ids"] = [
+        "E5",
+        "E12",
+        "E13",
+        "E14",
+        "E10",
+    ]
+    for claim, evidence_ids in zip(
+        mixed_sequence_draft["claim_support"][2:6],
+        (["E5"], ["E12"], ["E13"], ["E14"]),
+    ):
+        claim["evidence_ids"] = evidence_ids
+    try:
+        normalize_grounded_draft(
+            mixed_sequence_draft,
+            source_text,
+            mixed_sequence_graph,
+            readiness,
+        )
+    except ValueError as exc:
+        if "without citing one complete validated investigation sequence" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft combined partial support from two SIS chains.")
 
     missing_claim_support = json.loads(json.dumps(draft_payload))
     missing_claim_support["claim_support"].pop()
@@ -1373,9 +1634,13 @@ def validate_semantic_evidence_agent_layer():
     for expected_text in (
         "## Independent Evidence Audit",
         "Evidence items reviewed: 10",
+        "Claimed tax year: `supported`",
+        "Investigation sequences reviewed: 1",
         "## Claim-Level Grounding",
         "Independent audit: `supported`",
         "Source location: line 1, column 1, characters 0-",
+        "## Validated Investigation Sequences",
+        "### SIS1 - TU1 / Observer bandwidth scheduling",
     ):
         if expected_text not in rendered_agent_report:
             raise AssertionError("The rendered report omitted claim-level grounding results.")
@@ -1527,6 +1792,7 @@ def validate_semantic_evidence_agent_layer():
     print("=" * 80)
     print("PASS: validated exact source quotes and rejected fabricated evidence")
     print("PASS: derived exact source locations and rejected ambiguous repeated quotes")
+    print("PASS: required a grounded tax year and coherent audited SIS sequences")
     print("PASS: rejected unsupported normalized and drafted numeric facts")
     print("PASS: excluded inferred claims and rejected stream-specific GLOBAL evidence")
     print("PASS: excluded future work from the claimed-year evidence gate")
@@ -1786,6 +2052,30 @@ def validate_t661_capability_benchmarks(model):
     print(f"PASS: combined T661 benchmark ({total_passed}/{total_cases})")
 
 
+def validate_semantic_evidence_benchmark():
+    benchmark_data = json.loads(
+        SEMANTIC_EVIDENCE_BENCHMARK_PATH.read_text(encoding="utf-8")
+    )
+    result = run_semantic_evidence_benchmark(benchmark_data)
+    if result["passed"] != result["total"]:
+        failures = [
+            f"{case['id']}: {'; '.join(case['failures'])}"
+            for case in result["results"]
+            if not case["passed"]
+        ]
+        raise AssertionError(
+            f"{SEMANTIC_EVIDENCE_BENCHMARK_PATH.name} failed:\n"
+            + "\n".join(failures)
+        )
+
+    print("\nSemantic evidence gate benchmark checks")
+    print("=" * 80)
+    print(
+        f"PASS: {SEMANTIC_EVIDENCE_BENCHMARK_PATH.name} "
+        f"({result['passed']}/{result['total']})"
+    )
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -1881,3 +2171,4 @@ validate_semantic_evidence_agent_layer()
 validate_responses_http_client_layer()
 validate_incomplete_intake_capability(model)
 validate_t661_capability_benchmarks(model)
+validate_semantic_evidence_benchmark()

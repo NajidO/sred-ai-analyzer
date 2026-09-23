@@ -31,6 +31,7 @@ data/
   test_examples.csv
 benchmarks/
   BENCHMARK_FINDINGS.md
+  semantic_evidence_gate_benchmark.json
   t661_adversarial_benchmark.json
   t661_capability_benchmark.json
   t661_holdout_benchmark.json
@@ -49,6 +50,7 @@ src/
   intake_agent.py
   llm_report_agent.py
   run_capability_benchmark.py
+  run_semantic_evidence_benchmark.py
   predict_sred.py
   cra_guideline_checker.py
   cra_reference.py
@@ -150,13 +152,19 @@ evidence is complete:
    evidence items. Each item records certainty, claimed/prior/future timing, and whether
    the work belongs to the claimant, a claimant-directed contractor, or a third party.
    Local code derives line, column, and character locations and rejects repeated quotes
-   whose occurrence cannot be identified unambiguously.
-2. An independent evidence-audit call checks every extracted item's normalized fact,
-   category, certainty, tax-year scope, attribution, and stream assignment. Unsupported
-   or ambiguous items are removed, and newly detected contradictions block affected lines.
+   whose occurrence cannot be identified unambiguously. It also extracts explicit SIS
+   chains linking uncertainty, hypothesis, performed work, result, conclusion, and
+   advancement.
+2. An independent evidence-audit call checks the claimed tax year, every extracted
+   item's normalized fact, category, certainty, tax-year scope, attribution, and stream
+   assignment, every SIS relationship and chronology, and every extracted routine-work
+   or attribution blocker. Unsupported or ambiguous years, items, sequences, or blockers
+   are removed, and newly detected contradictions block affected lines.
 3. A local readiness gate checks every stream against the evidence needed for Lines
-   242, 244, and 246. It blocks contradictory, future, unattributed, routine, or
-   incomplete evidence and generates targeted questions instead of a partial report.
+   242, 244, and 246. It requires a uniquely grounded four-digit claimed tax year and a
+   coherent audited SIS chain for Lines 244 and 246. It blocks contradictory, future,
+   unattributed, routine, disconnected, or incomplete evidence and generates targeted
+   questions instead of a partial report.
 4. Grounded drafting runs only after every line passes. The model must cite evidence
    IDs for each line and for every sentence or standalone factual statement.
 5. A local post-draft audit rejects missing sentence maps, unknown or out-of-scope
@@ -263,6 +271,17 @@ controls. They do not call an OpenAI model and do not establish legal eligibilit
 See `benchmarks/BENCHMARK_FINDINGS.md` for the baseline failures, fixes, current
 results, and limits of the evaluation.
 
+The semantic evidence gate has a separate 11-case benchmark for claimed-year grounding,
+SIS linkage, chronology, attribution, future work, and contradictions:
+
+```bash
+venv/bin/python src/run_semantic_evidence_benchmark.py
+```
+
+This benchmark exercises the deterministic validation and independent-audit application
+layer with controlled evidence graphs. It does not score a live model's extraction
+quality.
+
 ## Add CRA-Grounded Training Examples
 
 ```bash
@@ -289,6 +308,7 @@ T661 project description checks: PASS
 Report strategy planner checks: PASS
 Semantic evidence-agent checks: PASS
 T661 capability benchmark: 29/29
+Semantic evidence gate benchmark: 11/11
 Incomplete intake gaps detected: 10/10
 Incomplete intake T661 drafts generated: 0
 Complete questionnaire T661 drafting: PASS

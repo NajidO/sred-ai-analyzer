@@ -322,6 +322,11 @@ When separate uncertainties have different hypotheses or investigations, use TU1
 TU2, SIS1, SIS2, and corresponding advancement labels inside the relevant line.
 Avoid duplicating common facts across streams.
 
+Use the validated investigation_sequences as the causal backbone for Lines 244 and
+246. Do not combine a hypothesis from one sequence with the work, result, conclusion,
+or advancement from another. When several sequences represent alternatives, refinements,
+or pivots, preserve that progression and identify the result that led to each decision.
+
 Line 242 must explain the technological objective, starting knowledge, limits of
 standard practice, and technological uncertainty. Line 244 must describe claimed-year
 hypotheses, experiments or analysis, observations, and conclusions in a coherent
@@ -416,6 +421,7 @@ def build_grounded_draft_input(context, graph, readiness):
             for stream in graph["technical_streams"]
         ],
         "evidence_items": graph["evidence_items"],
+        "investigation_sequences": graph["investigation_sequences"],
     }
     return (
         "VALIDATED EVIDENCE GRAPH\n"
@@ -762,6 +768,7 @@ def build_evidence_agent_report(
             grounding_audit_complete = True
     draft_ready = (
         draft_payload is not None
+        and readiness["can_draft"]
         and evidence_audit_complete
         and grounding_audit_complete
         and evidence_audit_failure is None
@@ -829,6 +836,18 @@ def build_evidence_agent_report(
             "Rejected extracted item "
             f"{item.get('original_id', 'unknown')}: {', '.join(item.get('reasons', []))}."
         )
+    for sequence in graph["validation"].get("rejected_sequences", []):
+        factual_risks.append(
+            "Rejected investigation sequence "
+            f"{sequence.get('original_id', 'unknown')}: "
+            f"{', '.join(sequence.get('reasons', []))}."
+        )
+    for issue in graph["validation"].get("rejected_issues", []):
+        factual_risks.append(
+            "Rejected extracted issue "
+            f"{issue.get('original_id', 'unknown')}: "
+            f"{', '.join(issue.get('reasons', []))}."
+        )
     factual_risks.extend(
         "Contradiction: " + item["description"]
         for item in graph["contradictions"]
@@ -852,7 +871,8 @@ def build_evidence_agent_report(
     if evidence_audit and not evidence_audit_failure:
         review_notes.insert(
             1,
-            "Every accepted evidence item passed an independent semantic classification audit.",
+            "The claimed tax year, every accepted evidence item, and each investigation "
+            "sequence passed an independent semantic audit.",
         )
     if draft_payload:
         review_notes.extend(draft_payload["review_notes"])
@@ -993,6 +1013,7 @@ def normalize_grounded_draft(payload, source_text, graph, readiness):
             evidence_ids,
             evidence_index,
             graph["technical_streams"],
+            graph["investigation_sequences"],
         )
 
     generated_text = "\n".join(
@@ -1198,8 +1219,10 @@ def validate_line_support(
     evidence_ids,
     evidence_index,
     streams,
+    investigation_sequences,
 ):
     cited_items = [evidence_index[evidence_id] for evidence_id in evidence_ids]
+    cited_ids = set(evidence_ids)
     for stream in streams:
         for category in LINE_REQUIREMENTS[line_number]:
             supported = any(
@@ -1212,6 +1235,51 @@ def validate_line_support(
                 raise ValueError(
                     f"Line {line_number} support omitted {category} evidence for "
                     f"{stream['id']}."
+                )
+
+        stream_sequences = [
+            sequence
+            for sequence in investigation_sequences
+            if sequence["stream_id"] == stream["id"]
+        ]
+        if line_number == "242":
+            linked = any(
+                cited_ids.intersection(sequence["uncertainty_evidence_ids"])
+                for sequence in stream_sequences
+            )
+            if not linked:
+                raise ValueError(
+                    f"Line 242 support did not cite an uncertainty linked to a validated "
+                    f"investigation sequence for {stream['id']}."
+                )
+        elif line_number == "244":
+            linked = any(
+                set(
+                    evidence_id
+                    for field in (
+                        "hypothesis_evidence_ids",
+                        "experiment_evidence_ids",
+                        "result_evidence_ids",
+                        "conclusion_evidence_ids",
+                    )
+                    for evidence_id in sequence[field]
+                ).issubset(cited_ids)
+                for sequence in stream_sequences
+            )
+            if not linked:
+                raise ValueError(
+                    f"Line 244 support combined evidence without citing one complete "
+                    f"validated investigation sequence for {stream['id']}."
+                )
+        elif line_number == "246":
+            linked = any(
+                cited_ids.intersection(sequence["advancement_evidence_ids"])
+                for sequence in stream_sequences
+            )
+            if not linked:
+                raise ValueError(
+                    f"Line 246 support did not cite advancement evidence linked to a "
+                    f"validated investigation sequence for {stream['id']}."
                 )
 
 
@@ -1545,6 +1613,8 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
             lines.extend(["", evidence_audit_status["message"]])
         if evidence_audit:
             item_audits = evidence_audit.get("item_audits", [])
+            sequence_audits = evidence_audit.get("sequence_audits", [])
+            issue_audits = evidence_audit.get("issue_audits", [])
             rejected_ids = [
                 item["evidence_id"]
                 for item in item_audits
@@ -1560,6 +1630,20 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
                     )
                 )
             ]
+            rejected_sequence_ids = [
+                item["sequence_id"]
+                for item in sequence_audits
+                if any(
+                    item.get(dimension) != "supported"
+                    for dimension in ("relationship", "chronology")
+                )
+            ]
+            tax_year_audit = evidence_audit.get("claimed_tax_year_audit", {})
+            rejected_issue_ids = [
+                item["issue_id"]
+                for item in issue_audits
+                if item.get("verdict") != "supported"
+            ]
             lines.extend([
                 "",
                 evidence_audit.get("overall_assessment", "No assessment supplied."),
@@ -1567,6 +1651,19 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
                 f"- Evidence items reviewed: {len(item_audits)}",
                 "- Semantically rejected items: "
                 + (", ".join(rejected_ids) if rejected_ids else "None"),
+                "- Claimed tax year: `"
+                + tax_year_audit.get("verdict", "not_reviewed")
+                + "`",
+                f"- Investigation sequences reviewed: {len(sequence_audits)}",
+                "- Rejected investigation sequences: "
+                + (
+                    ", ".join(rejected_sequence_ids)
+                    if rejected_sequence_ids
+                    else "None"
+                ),
+                f"- Extracted blocker issues reviewed: {len(issue_audits)}",
+                "- Rejected blocker issues: "
+                + (", ".join(rejected_issue_ids) if rejected_issue_ids else "None"),
                 "- New contradictions: "
                 + str(len(evidence_audit.get("discovered_contradictions", []))),
             ])
@@ -1580,6 +1677,14 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
             "",
             f"- Accepted evidence items: {validation['accepted_evidence_items']}",
             f"- Rejected evidence items: {validation['rejected_evidence_items']}",
+            "- Accepted investigation sequences: "
+            + str(validation.get("accepted_investigation_sequences", 0)),
+            "- Rejected investigation sequences: "
+            + str(validation.get("rejected_investigation_sequences", 0)),
+            "- Accepted extracted blocker issues: "
+            + str(validation.get("accepted_extracted_issues", 0)),
+            "- Rejected extracted blocker issues: "
+            + str(validation.get("rejected_extracted_issues", 0)),
         ])
         for item in graph["evidence_items"]:
             lines.extend([
@@ -1593,6 +1698,25 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
                 f"- Source quote: \"{item['source_quote']}\"",
                 f"- Normalized fact: {item['normalized_fact']}",
             ])
+        if graph.get("investigation_sequences"):
+            lines.extend(["", "## Validated Investigation Sequences"])
+            for sequence in graph["investigation_sequences"]:
+                lines.extend([
+                    "",
+                    f"### {sequence['id']} - {sequence['stream_id']} / {sequence['title']}",
+                    "",
+                    "- Uncertainty: "
+                    + ", ".join(sequence["uncertainty_evidence_ids"]),
+                    "- Hypothesis: "
+                    + ", ".join(sequence["hypothesis_evidence_ids"]),
+                    "- Experiment or analysis: "
+                    + ", ".join(sequence["experiment_evidence_ids"]),
+                    "- Result: " + ", ".join(sequence["result_evidence_ids"]),
+                    "- Conclusion: "
+                    + ", ".join(sequence["conclusion_evidence_ids"]),
+                    "- Advancement: "
+                    + ", ".join(sequence["advancement_evidence_ids"]),
+                ])
 
     if report.get("agent_stages"):
         lines.extend(["", "## Agent Stages"])

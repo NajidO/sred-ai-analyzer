@@ -5,7 +5,6 @@ from grounding import (
     find_source_quote_locations,
     find_unsupported_numeric_facts,
     format_source_location,
-    source_contains_quote,
     unique_items,
 )
 
@@ -70,6 +69,15 @@ EVIDENCE_AUDIT_DIMENSIONS = (
     "attribution",
     "stream_assignment",
 )
+SEQUENCE_AUDIT_DIMENSIONS = ("relationship", "chronology")
+SEQUENCE_REFERENCE_FIELDS = {
+    "uncertainty_evidence_ids": "uncertainty",
+    "hypothesis_evidence_ids": "hypothesis",
+    "experiment_evidence_ids": "experiment_or_analysis",
+    "result_evidence_ids": "result",
+    "conclusion_evidence_ids": "conclusion",
+    "advancement_evidence_ids": "advancement",
+}
 
 
 EVIDENCE_GRAPH_SCHEMA = {
@@ -138,6 +146,31 @@ EVIDENCE_GRAPH_SCHEMA = {
                 "additionalProperties": False,
             },
         },
+        "investigation_sequences": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "string"},
+                    "stream_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    **{
+                        field: {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        }
+                        for field in SEQUENCE_REFERENCE_FIELDS
+                    },
+                },
+                "required": [
+                    "id",
+                    "stream_id",
+                    "title",
+                    *SEQUENCE_REFERENCE_FIELDS,
+                ],
+                "additionalProperties": False,
+            },
+        },
         "contradictions": {
             "type": "array",
             "items": {
@@ -202,6 +235,7 @@ EVIDENCE_GRAPH_SCHEMA = {
         "claimed_tax_year_source_quote",
         "technical_streams",
         "evidence_items",
+        "investigation_sequences",
         "contradictions",
         "routine_work",
         "attribution_issues",
@@ -215,6 +249,18 @@ EVIDENCE_AUDIT_SCHEMA = {
     "type": "object",
     "properties": {
         "overall_assessment": {"type": "string"},
+        "claimed_tax_year_audit": {
+            "type": "object",
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": sorted(AUDIT_VERDICTS),
+                },
+                "reason": {"type": "string"},
+            },
+            "required": ["verdict", "reason"],
+            "additionalProperties": False,
+        },
         "item_audits": {
             "type": "array",
             "items": {
@@ -235,6 +281,45 @@ EVIDENCE_AUDIT_SCHEMA = {
                     *EVIDENCE_AUDIT_DIMENSIONS,
                     "reason",
                 ],
+                "additionalProperties": False,
+            },
+        },
+        "sequence_audits": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "sequence_id": {"type": "string"},
+                    **{
+                        dimension: {
+                            "type": "string",
+                            "enum": sorted(AUDIT_VERDICTS),
+                        }
+                        for dimension in SEQUENCE_AUDIT_DIMENSIONS
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": [
+                    "sequence_id",
+                    *SEQUENCE_AUDIT_DIMENSIONS,
+                    "reason",
+                ],
+                "additionalProperties": False,
+            },
+        },
+        "issue_audits": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "issue_id": {"type": "string"},
+                    "verdict": {
+                        "type": "string",
+                        "enum": sorted(AUDIT_VERDICTS),
+                    },
+                    "reason": {"type": "string"},
+                },
+                "required": ["issue_id", "verdict", "reason"],
                 "additionalProperties": False,
             },
         },
@@ -260,7 +345,10 @@ EVIDENCE_AUDIT_SCHEMA = {
     },
     "required": [
         "overall_assessment",
+        "claimed_tax_year_audit",
         "item_audits",
+        "sequence_audits",
+        "issue_audits",
         "discovered_contradictions",
     ],
     "additionalProperties": False,
@@ -283,6 +371,14 @@ line and character location.
 Separate distinct technological uncertainties into TU streams when they have different
 unknown relationships, hypotheses, investigations, or advancements. Keep interacting
 work in one stream when splitting would duplicate the same causal investigation.
+
+Build investigation_sequences only when the source supports a coherent SIS chain.
+Each sequence must link evidence for one uncertainty to the hypothesis considered,
+the experiment or analysis actually performed, its observed result, the conclusion
+drawn from that result, and the technological advancement gained or attempted. Create
+multiple sequences when materially different alternatives, iterations, or pivots have
+their own results and conclusions. Do not connect merely related snippets to fill the
+fields, and do not infer chronology from the order in which the client wrote them.
 
 Set claimed_tax_year only when the source identifies it, and provide the exact source
 quote that establishes it. Otherwise return empty strings for both tax-year fields.
@@ -319,6 +415,19 @@ enough. Mark a dimension supported only when the source establishes it without a
 an unstated fact, chronology, actor, result, conclusion, or causal relationship. Mark
 it ambiguous when the source leaves material doubt, and unsupported when it conflicts
 with or does not establish the classification.
+
+Audit the claimed tax year independently. Mark it supported only when the quoted source
+identifies that tax year and the surrounding source supports using it as the reporting
+period. Audit every investigation sequence exactly once. Its relationship is supported
+only when all cited evidence belongs to one coherent investigation of the stated
+uncertainty; its chronology is supported only when the source establishes hypothesis,
+performed work, observed result, and resulting conclusion in that causal order. Related
+facts or their order in the client narrative are not enough.
+
+Audit every routine-work and attribution issue exactly once. Mark an issue supported
+only when its quote and surrounding source establish the interpretation and the stated
+blocking effect. A quote that merely mentions a vendor, implementation, or third party
+does not by itself establish routine resolution or unclear claimant responsibility.
 
 Pay particular attention to routine implementation described as uncertainty,
 commercial testing described as technological experimentation, future or prior-year
@@ -391,6 +500,9 @@ def build_evidence_audit_input(source_text, graph):
         "claimed_tax_year_source_quote": graph["claimed_tax_year_source_quote"],
         "technical_streams": graph["technical_streams"],
         "evidence_items": graph["evidence_items"],
+        "investigation_sequences": graph["investigation_sequences"],
+        "routine_work": graph["routine_work"],
+        "attribution_issues": graph["attribution_issues"],
     }
     return (
         "PROJECT SOURCE\n"
@@ -448,7 +560,26 @@ def validate_evidence_audit_payload(payload, graph):
         raise ValueError("The evidence audit is missing fields: " + ", ".join(missing))
     if not isinstance(payload["overall_assessment"], str):
         raise ValueError("The evidence audit assessment must be a string.")
-    for field in ("item_audits", "discovered_contradictions"):
+    tax_year_audit = payload["claimed_tax_year_audit"]
+    if not isinstance(tax_year_audit, dict):
+        raise ValueError("The claimed tax year audit must be an object.")
+    if tax_year_audit.get("verdict") not in AUDIT_VERDICTS:
+        raise ValueError("The claimed tax year audit returned an invalid verdict.")
+    if not isinstance(tax_year_audit.get("reason"), str) or not tax_year_audit[
+        "reason"
+    ].strip():
+        raise ValueError("The claimed tax year audit returned no reason.")
+    if tax_year_audit["verdict"] == "supported" and not graph["claimed_tax_year"]:
+        raise ValueError(
+            "The evidence audit marked an absent claimed tax year as supported."
+        )
+
+    for field in (
+        "item_audits",
+        "sequence_audits",
+        "issue_audits",
+        "discovered_contradictions",
+    ):
         if not isinstance(payload[field], list):
             raise ValueError(f"The evidence audit field '{field}' must be a list.")
 
@@ -479,6 +610,79 @@ def validate_evidence_audit_payload(payload, graph):
     if missing_ids:
         raise ValueError(
             "The evidence audit omitted evidence IDs: " + ", ".join(missing_ids) + "."
+        )
+
+    expected_sequence_ids = {
+        sequence["id"] for sequence in graph["investigation_sequences"]
+    }
+    audited_sequence_ids = set()
+    for audit in payload["sequence_audits"]:
+        if not isinstance(audit, dict):
+            raise ValueError("Every investigation-sequence audit must be an object.")
+        required = {"sequence_id", "reason", *SEQUENCE_AUDIT_DIMENSIONS}
+        if not required.issubset(audit):
+            raise ValueError("An investigation-sequence audit is missing required fields.")
+        sequence_id = audit["sequence_id"]
+        if sequence_id not in expected_sequence_ids:
+            raise ValueError(
+                f"The evidence audit returned unknown sequence ID {sequence_id}."
+            )
+        if sequence_id in audited_sequence_ids:
+            raise ValueError(
+                f"The evidence audit duplicated sequence ID {sequence_id}."
+            )
+        audited_sequence_ids.add(sequence_id)
+        if not isinstance(audit["reason"], str) or not audit["reason"].strip():
+            raise ValueError(
+                f"The evidence audit returned no reason for sequence {sequence_id}."
+            )
+        for dimension in SEQUENCE_AUDIT_DIMENSIONS:
+            if audit[dimension] not in AUDIT_VERDICTS:
+                raise ValueError(
+                    f"The evidence audit returned an invalid {dimension} verdict "
+                    f"for sequence {sequence_id}."
+                )
+
+    missing_sequence_ids = sorted(expected_sequence_ids - audited_sequence_ids)
+    if missing_sequence_ids:
+        raise ValueError(
+            "The evidence audit omitted investigation sequence IDs: "
+            + ", ".join(missing_sequence_ids)
+            + "."
+        )
+
+    expected_issue_ids = {
+        issue["id"]
+        for issue in [*graph["routine_work"], *graph["attribution_issues"]]
+    }
+    audited_issue_ids = set()
+    for audit in payload["issue_audits"]:
+        if not isinstance(audit, dict):
+            raise ValueError("Every extracted-issue audit must be an object.")
+        required = {"issue_id", "verdict", "reason"}
+        if not required.issubset(audit):
+            raise ValueError("An extracted-issue audit is missing required fields.")
+        issue_id = audit["issue_id"]
+        if issue_id not in expected_issue_ids:
+            raise ValueError(f"The evidence audit returned unknown issue ID {issue_id}.")
+        if issue_id in audited_issue_ids:
+            raise ValueError(f"The evidence audit duplicated issue ID {issue_id}.")
+        audited_issue_ids.add(issue_id)
+        if audit["verdict"] not in AUDIT_VERDICTS:
+            raise ValueError(
+                f"The evidence audit returned an invalid verdict for issue {issue_id}."
+            )
+        if not isinstance(audit["reason"], str) or not audit["reason"].strip():
+            raise ValueError(
+                f"The evidence audit returned no reason for issue {issue_id}."
+            )
+
+    missing_issue_ids = sorted(expected_issue_ids - audited_issue_ids)
+    if missing_issue_ids:
+        raise ValueError(
+            "The evidence audit omitted extracted issue IDs: "
+            + ", ".join(missing_issue_ids)
+            + "."
         )
 
     for contradiction in payload["discovered_contradictions"]:
@@ -548,6 +752,99 @@ def apply_evidence_audit(graph, payload):
         accepted_items.append(item)
 
     accepted_ids = {item["id"] for item in accepted_items}
+    sequence_audit_by_id = {
+        audit["sequence_id"]: audit
+        for audit in payload["sequence_audits"]
+    }
+    accepted_sequences = []
+    semantic_sequence_rejections = []
+    rejected_sequence_ids = set()
+    for sequence in graph["investigation_sequences"]:
+        audit = sequence_audit_by_id[sequence["id"]]
+        failed_dimensions = [
+            dimension
+            for dimension in SEQUENCE_AUDIT_DIMENSIONS
+            if audit[dimension] != "supported"
+        ]
+        referenced_ids = {
+            evidence_id
+            for field in SEQUENCE_REFERENCE_FIELDS
+            for evidence_id in sequence[field]
+        }
+        removed_ids = sorted(referenced_ids - accepted_ids)
+        reasons = []
+        if failed_dimensions:
+            reasons.append(
+                "semantic sequence audit rejected the sequence ("
+                + ", ".join(
+                    f"{dimension}={audit[dimension]}"
+                    for dimension in failed_dimensions
+                )
+                + "): "
+                + audit["reason"].strip()
+            )
+        if removed_ids:
+            reasons.append(
+                "sequence cited evidence removed by the semantic audit: "
+                + ", ".join(removed_ids)
+            )
+        if reasons:
+            rejected_sequence_ids.add(sequence["id"])
+            semantic_sequence_rejections.append({
+                "original_id": sequence["id"],
+                "reasons": reasons,
+            })
+            continue
+        accepted_sequences.append(sequence)
+
+    issue_audit_by_id = {
+        audit["issue_id"]: audit
+        for audit in payload["issue_audits"]
+    }
+    accepted_routine_work = []
+    accepted_attribution_issues = []
+    semantic_issue_rejections = []
+    rejected_issue_ids = set()
+    for issue_type, issues, accepted in (
+        ("routine_work", graph["routine_work"], accepted_routine_work),
+        (
+            "attribution_issue",
+            graph["attribution_issues"],
+            accepted_attribution_issues,
+        ),
+    ):
+        for issue in issues:
+            audit = issue_audit_by_id[issue["id"]]
+            if audit["verdict"] == "supported":
+                accepted.append(issue)
+                continue
+            rejected_issue_ids.add(issue["id"])
+            semantic_issue_rejections.append({
+                "original_id": issue["id"],
+                "issue_type": issue_type,
+                "reasons": [
+                    "semantic evidence audit rejected the issue "
+                    f"({audit['verdict']}): {audit['reason'].strip()}"
+                ],
+            })
+
+    tax_year_audit = payload["claimed_tax_year_audit"]
+    tax_year_supported = (
+        tax_year_audit["verdict"] == "supported"
+        and bool(graph["claimed_tax_year"])
+    )
+    claimed_tax_year = graph["claimed_tax_year"] if tax_year_supported else ""
+    claimed_tax_year_quote = (
+        graph["claimed_tax_year_source_quote"] if tax_year_supported else ""
+    )
+    extraction_notes = list(graph["extraction_notes"])
+    if graph["claimed_tax_year"] and not tax_year_supported:
+        extraction_notes = unique_items([
+            *extraction_notes,
+            "Claimed tax year was cleared by the independent evidence audit: "
+            + tax_year_audit["reason"].strip(),
+        ])
+
     contradictions = []
     for contradiction in graph["contradictions"]:
         if set(contradiction["evidence_ids"]).issubset(accepted_ids):
@@ -568,16 +865,41 @@ def apply_evidence_audit(graph, payload):
 
     prior_rejections = list(graph["validation"].get("rejected_items", []))
     rejected_items = [*prior_rejections, *semantic_rejections]
+    rejected_sequences = [
+        *graph["validation"].get("rejected_sequences", []),
+        *semantic_sequence_rejections,
+    ]
+    rejected_issues = [
+        *graph["validation"].get("rejected_issues", []),
+        *semantic_issue_rejections,
+    ]
     return {
         **graph,
+        "claimed_tax_year": claimed_tax_year,
+        "claimed_tax_year_source_quote": claimed_tax_year_quote,
         "evidence_items": accepted_items,
+        "investigation_sequences": accepted_sequences,
         "contradictions": contradictions,
+        "routine_work": accepted_routine_work,
+        "attribution_issues": accepted_attribution_issues,
+        "extraction_notes": extraction_notes,
         "evidence_audit": payload,
         "validation": {
             "accepted_evidence_items": len(accepted_items),
             "rejected_evidence_items": len(rejected_items),
             "rejected_items": rejected_items,
             "semantic_rejected_evidence_ids": sorted(rejected_ids),
+            "accepted_investigation_sequences": len(accepted_sequences),
+            "rejected_investigation_sequences": len(rejected_sequences),
+            "rejected_sequences": rejected_sequences,
+            "semantic_rejected_sequence_ids": sorted(rejected_sequence_ids),
+            "accepted_extracted_issues": (
+                len(accepted_routine_work) + len(accepted_attribution_issues)
+            ),
+            "rejected_extracted_issues": len(rejected_issues),
+            "rejected_issues": rejected_issues,
+            "semantic_rejected_issue_ids": sorted(rejected_issue_ids),
+            "claimed_tax_year_audit_verdict": tax_year_audit["verdict"],
             "semantic_audit_passed": True,
         },
     }
@@ -594,6 +916,7 @@ def validate_evidence_graph_payload(payload):
     list_fields = [
         "technical_streams",
         "evidence_items",
+        "investigation_sequences",
         "contradictions",
         "routine_work",
         "attribution_issues",
@@ -610,6 +933,7 @@ def validate_evidence_graph_payload(payload):
     object_list_fields = [
         "technical_streams",
         "evidence_items",
+        "investigation_sequences",
         "contradictions",
         "routine_work",
         "attribution_issues",
@@ -633,16 +957,36 @@ def normalize_evidence_graph(payload, source_text):
         source_text,
         claimed_tax_year_quote,
     )
+    claimed_tax_year_values = set(
+        re.findall(r"\b(?:19|20)\d{2}\b", claimed_tax_year)
+    )
+    quoted_tax_year_values = set(
+        re.findall(r"\b(?:19|20)\d{2}\b", claimed_tax_year_quote)
+    )
+    tax_year_values_match = (
+        bool(claimed_tax_year_values)
+        and claimed_tax_year_values.issubset(quoted_tax_year_values)
+    )
     tax_year_grounded = (
         bool(claimed_tax_year)
         and bool(claimed_tax_year_quote)
         and len(claimed_year_quote_locations) == 1
+        and tax_year_values_match
     )
     if not tax_year_grounded:
         if claimed_tax_year or claimed_tax_year_quote:
+            reasons = []
+            if len(claimed_year_quote_locations) != 1:
+                reasons.append(
+                    "its source quote matched "
+                    f"{len(claimed_year_quote_locations)} locations instead of exactly one"
+                )
+            if not claimed_tax_year_values:
+                reasons.append("the claimed tax year contained no four-digit year")
+            elif not tax_year_values_match:
+                reasons.append("the claimed year did not appear in its source quote")
             normalization_notes.append(
-                "Claimed tax year was cleared because its source quote matched "
-                f"{len(claimed_year_quote_locations)} locations; exactly one is required."
+                "Claimed tax year was cleared because " + "; ".join(reasons) + "."
             )
         claimed_tax_year = ""
         claimed_tax_year_quote = ""
@@ -673,6 +1017,7 @@ def normalize_evidence_graph(payload, source_text):
     evidence_items = []
     evidence_id_map = {}
     seen_evidence = set()
+    seen_original_evidence_ids = set()
 
     for index, item in enumerate(payload["evidence_items"], start=1):
         quote = str(item.get("source_quote", "")).strip()
@@ -690,6 +1035,9 @@ def normalize_evidence_graph(payload, source_text):
         normalized_fact = str(item.get("normalized_fact", "")).strip()
 
         rejection_reasons = []
+        if original_id in seen_original_evidence_ids:
+            rejection_reasons.append("duplicate source evidence ID")
+        seen_original_evidence_ids.add(original_id)
         if category not in EVIDENCE_CATEGORIES:
             rejection_reasons.append("invalid category")
         if certainty not in CERTAINTY_LEVELS:
@@ -755,6 +1103,92 @@ def normalize_evidence_graph(payload, source_text):
             "attribution": attribution,
         })
 
+    evidence_index = {item["id"]: item for item in evidence_items}
+    investigation_sequences = []
+    rejected_sequences = []
+    seen_original_sequence_ids = set()
+    seen_sequence_signatures = set()
+
+    for index, sequence in enumerate(payload["investigation_sequences"], start=1):
+        original_id = str(sequence.get("id", "")).strip() or f"sequence_{index}"
+        original_stream_id = str(sequence.get("stream_id", "")).strip()
+        stream_id = stream_id_map.get(original_stream_id)
+        rejection_reasons = []
+        if original_id in seen_original_sequence_ids:
+            rejection_reasons.append("duplicate source investigation-sequence ID")
+        seen_original_sequence_ids.add(original_id)
+        if stream_id not in valid_stream_ids:
+            rejection_reasons.append("unknown or GLOBAL technical stream")
+
+        normalized_references = {}
+        for field, expected_category in SEQUENCE_REFERENCE_FIELDS.items():
+            raw_ids = sequence.get(field, [])
+            if not isinstance(raw_ids, list) or not all(
+                isinstance(evidence_id, str) for evidence_id in raw_ids
+            ):
+                rejection_reasons.append(f"{field} must be a list of evidence IDs")
+                normalized_references[field] = []
+                continue
+            unknown_ids = [
+                evidence_id
+                for evidence_id in raw_ids
+                if evidence_id not in evidence_id_map
+            ]
+            if unknown_ids:
+                rejection_reasons.append(
+                    f"{field} cited rejected or unknown evidence: "
+                    + ", ".join(unique_items(unknown_ids))
+                )
+            mapped_ids = unique_items(
+                evidence_id_map[evidence_id]
+                for evidence_id in raw_ids
+                if evidence_id in evidence_id_map
+            )
+            if not mapped_ids:
+                rejection_reasons.append(f"{field} contained no accepted evidence")
+            for evidence_id in mapped_ids:
+                item = evidence_index[evidence_id]
+                if item["category"] != expected_category:
+                    rejection_reasons.append(
+                        f"{field} cited {evidence_id} with category {item['category']}"
+                    )
+                elif not evidence_item_supports_requirement(item, expected_category):
+                    rejection_reasons.append(
+                        f"{field} cited {evidence_id} that was not explicit, claimed-year, "
+                        "claimant-attributed evidence"
+                    )
+                if stream_id and item["stream_id"] != stream_id:
+                    rejection_reasons.append(
+                        f"{field} cited {evidence_id} from another technical stream"
+                    )
+            normalized_references[field] = mapped_ids
+
+        signature = (
+            stream_id,
+            *(
+                tuple(normalized_references[field])
+                for field in SEQUENCE_REFERENCE_FIELDS
+            ),
+        )
+        if signature in seen_sequence_signatures:
+            rejection_reasons.append("duplicate investigation sequence")
+
+        if rejection_reasons:
+            rejected_sequences.append({
+                "original_id": original_id,
+                "reasons": unique_items(rejection_reasons),
+            })
+            continue
+
+        seen_sequence_signatures.add(signature)
+        investigation_sequences.append({
+            "id": f"SIS{len(investigation_sequences) + 1}",
+            "stream_id": stream_id,
+            "title": str(sequence.get("title", "")).strip()
+            or f"Systematic investigation {len(investigation_sequences) + 1}",
+            **normalized_references,
+        })
+
     contradictions = []
     for index, contradiction in enumerate(payload["contradictions"], start=1):
         evidence_ids = [
@@ -772,18 +1206,21 @@ def normalize_evidence_graph(payload, source_text):
             "blocks_lines": blocks_lines,
         })
 
-    routine_work = normalize_quoted_issues(
+    routine_work, rejected_routine_work = normalize_quoted_issues(
         payload["routine_work"],
         source_text,
         description_key="reason",
         include_blocks=False,
+        id_prefix="R",
     )
-    attribution_issues = normalize_quoted_issues(
+    attribution_issues, rejected_attribution_issues = normalize_quoted_issues(
         payload["attribution_issues"],
         source_text,
         description_key="description",
         include_blocks=True,
+        id_prefix="A",
     )
+    rejected_issues = [*rejected_routine_work, *rejected_attribution_issues]
 
     return {
         "project_summary": str(payload["project_summary"]).strip(),
@@ -791,6 +1228,7 @@ def normalize_evidence_graph(payload, source_text):
         "claimed_tax_year_source_quote": claimed_tax_year_quote,
         "technical_streams": streams,
         "evidence_items": evidence_items,
+        "investigation_sequences": investigation_sequences,
         "contradictions": contradictions,
         "routine_work": routine_work,
         "attribution_issues": attribution_issues,
@@ -804,6 +1242,12 @@ def normalize_evidence_graph(payload, source_text):
             "accepted_evidence_items": len(evidence_items),
             "rejected_evidence_items": len(rejected),
             "rejected_items": rejected,
+            "accepted_investigation_sequences": len(investigation_sequences),
+            "rejected_investigation_sequences": len(rejected_sequences),
+            "rejected_sequences": rejected_sequences,
+            "accepted_extracted_issues": len(routine_work) + len(attribution_issues),
+            "rejected_extracted_issues": len(rejected_issues),
+            "rejected_issues": rejected_issues,
         },
     }
 
@@ -813,24 +1257,53 @@ def normalize_quoted_issues(
     source_text,
     description_key,
     include_blocks,
+    id_prefix,
 ):
     normalized = []
-    for issue in issues:
+    rejected = []
+    seen_issues = set()
+    for source_index, issue in enumerate(issues, start=1):
         quote = str(issue.get("source_quote", "")).strip()
-        if not source_contains_quote(source_text, quote):
+        description = str(issue.get(description_key, "")).strip()
+        quote_locations = find_source_quote_locations(source_text, quote)
+        rejection_reasons = []
+        if len(quote_locations) != 1:
+            rejection_reasons.append(
+                "source quote matched "
+                f"{len(quote_locations)} locations; exactly one is required"
+            )
+        if not description:
+            rejection_reasons.append("issue interpretation was empty")
+        blocks_lines = (
+            normalize_blocked_lines(issue.get("blocks_lines", []))
+            if include_blocks
+            else []
+        )
+        if include_blocks and not blocks_lines:
+            rejection_reasons.append("issue did not identify a valid blocked T661 line")
+        signature = (quote.casefold(), description.casefold(), tuple(blocks_lines))
+        if signature in seen_issues:
+            rejection_reasons.append("duplicate extracted issue")
+        if rejection_reasons:
+            rejected.append({
+                "original_id": f"{id_prefix}{source_index}",
+                "issue_type": (
+                    "attribution_issue" if include_blocks else "routine_work"
+                ),
+                "reasons": rejection_reasons,
+            })
             continue
+        seen_issues.add(signature)
         item = {
+            "id": f"{id_prefix}{len(normalized) + 1}",
             "source_quote": quote,
-            description_key: str(issue.get(description_key, "")).strip(),
+            "source_location": format_source_location(quote_locations[0]),
+            description_key: description,
         }
         if include_blocks:
-            item["blocks_lines"] = normalize_blocked_lines(
-                issue.get("blocks_lines", [])
-            )
-            if not item["blocks_lines"]:
-                continue
+            item["blocks_lines"] = blocks_lines
         normalized.append(item)
-    return normalized
+    return normalized, rejected
 
 
 def normalize_blocked_lines(lines):
@@ -873,10 +1346,18 @@ def assess_evidence_graph(graph):
         if item["certainty"] == "explicit"
     ]
     category_index = build_category_index(explicit_items)
+    sequence_index = {}
+    for sequence in graph["investigation_sequences"]:
+        sequence_index.setdefault(sequence["stream_id"], []).append(sequence)
     sections = {}
 
     for line_number, requirements in LINE_REQUIREMENTS.items():
         missing = []
+        if not graph["claimed_tax_year"]:
+            missing.append(
+                "Provide the exact claimed tax year and a source passage that uniquely "
+                "identifies it before drafting any T661 project-description line."
+            )
         supported = []
         stream_assessments = []
 
@@ -897,6 +1378,17 @@ def assess_evidence_graph(graph):
                         build_gap_message(line_number, stream, category)
                     )
 
+            validated_sequences = sequence_index.get(stream["id"], [])
+            if line_number in {"244", "246"} and not validated_sequences:
+                stream_missing.append("investigation_sequence")
+                missing.append(
+                    build_gap_message(
+                        line_number,
+                        stream,
+                        "investigation_sequence",
+                    )
+                )
+
             supported.extend(stream_supported)
             stream_assessments.append({
                 "stream_id": stream["id"],
@@ -904,6 +1396,9 @@ def assess_evidence_graph(graph):
                 "supported_evidence_ids": unique_items(
                     item["id"] for item in stream_supported
                 ),
+                "validated_investigation_sequence_ids": [
+                    sequence["id"] for sequence in validated_sequences
+                ],
                 "missing_categories": stream_missing,
             })
 
@@ -954,6 +1449,7 @@ def assess_evidence_graph(graph):
     ]
     can_draft = bool(streams) and not blocked_lines and not routine_only
     questions = [
+        *build_claimed_tax_year_questions(graph),
         *build_attribution_questions(graph),
         *build_evidence_questions(sections, streams),
     ]
@@ -1019,6 +1515,10 @@ def build_gap_message(line_number, stream, category):
         "conclusion": "the technical conclusion and resulting decision or next step",
         "supporting_record": "a contemporaneous record supporting the investigation sequence",
         "advancement": "the underlying technological knowledge gained or attempted",
+        "investigation_sequence": (
+            "a coherent SIS chain linking the uncertainty, hypothesis, performed work, "
+            "observed result, conclusion, and advancement"
+        ),
     }
     detail = descriptions.get(category, category.replace("_", " "))
     return f"{stream['id']} ({stream['title']}): provide {detail} for Line {line_number}."
@@ -1037,6 +1537,7 @@ def build_evidence_questions(sections, streams):
         "conclusion": "What conclusion followed from each {stream_id} result, and did it cause refinement, rejection, selection, or a pivot?",
         "supporting_record": "Which dated records support the {stream_id} hypothesis, work, result, and decision sequence?",
         "advancement": "What underlying technological knowledge did {stream_id} establish or attempt to establish beyond the starting knowledge base?",
+        "investigation_sequence": "For each material {stream_id} iteration, which uncertainty and hypothesis led to which performed test or analysis, what was observed, what conclusion followed, and what technological knowledge changed?",
     }
     questions = []
 
@@ -1077,8 +1578,36 @@ def evidence_examples(category):
         "conclusion": ["Decision note", "Review minutes", "Revision history"],
         "supporting_record": ["Dated log", "Source commit", "Design revision", "Test file"],
         "advancement": ["Technical conclusion", "Boundary analysis", "Failed-path learning"],
+        "investigation_sequence": [
+            "Dated experiment matrix",
+            "Iteration-to-result table",
+            "Decision or pivot record",
+        ],
     }
     return examples.get(category, ["Technical record"])
+
+
+def build_claimed_tax_year_questions(graph):
+    if graph["claimed_tax_year"]:
+        return []
+    return [{
+        "question": (
+            "What exact tax year is being claimed, and which dated project record or "
+            "client statement establishes that reporting period?"
+        ),
+        "why_it_matters": (
+            "Lines 242, 244, and 246 must distinguish work and knowledge in the claimed "
+            "tax year from prior work, later work, and undated activity."
+        ),
+        "examples_to_check": [
+            "Fiscal year-end",
+            "Dated project authorization",
+            "Contemporaneous test or engineering record",
+        ],
+        "line_number": "242/244/246",
+        "stream_id": GLOBAL_STREAM_ID,
+        "category": "claimed_tax_year",
+    }]
 
 
 def build_attribution_questions(graph):

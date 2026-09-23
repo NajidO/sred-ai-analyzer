@@ -133,21 +133,34 @@ stream, category, and attribution. Local code rejects fabricated quotes, unsuppo
 normalized numbers, ambiguous repeated quotes, stream-specific evidence assigned
 globally, and obvious claimed-year conflicts. It derives the final line, column, and
 character location instead of trusting a model-authored location. The independent audit
-reviews every item across six semantic
-dimensions, removes unsupported or ambiguous classifications, and can add material
-contradictions that the extraction stage missed.
+reviews every item across six semantic dimensions, the claimed tax year, and each
+proposed investigation relationship and chronology. It also reviews model-authored
+routine-work and attribution blockers so a plausible but unsupported interpretation
+cannot withhold a report. The local layer removes unsupported or ambiguous
+classifications, sequences, and blockers, clears an unsupported claimed year, and can
+add material contradictions that the extraction stage missed.
 
 The local readiness gate requires objective, starting knowledge, standard-practice
 limit, and uncertainty evidence for Line 242; hypothesis, claimed-year investigation,
 result, conclusion, and supporting-record evidence for Line 244; and claimed-year
-advancement evidence for Line 246. Drafting occurs only after all streams pass the
-evidence audit and readiness gate. A local post-draft audit requires evidence IDs for
-every category,
-stream, and sentence; checks word limits and numeric grounding; and rejects incomplete
-or out-of-scope claim maps. A final independent model call reviews every sentence
+advancement evidence for Line 246. All lines also require a uniquely sourced four-digit
+claimed year. Lines 244 and 246 require a complete SIS chain linking explicit,
+claimed-year, claimant-attributed uncertainty, hypothesis, work, result, conclusion,
+and advancement evidence. Drafting occurs only after all streams pass the evidence
+audit and readiness gate. A local post-draft audit requires evidence IDs for every
+category, stream, and sentence; checks word limits and numeric grounding; and rejects
+incomplete or out-of-scope claim maps. A final independent model call reviews every sentence
 against exactly its cited evidence. Any ambiguous, unsupported, missing, duplicated, or
 partially reviewed claim causes all T661 prose to be withheld. Mocked end-to-end tests
 exercise these stages without making a paid API call.
+
+`semantic_evidence_gate_benchmark.json` adds eleven graph-level adversarial cases. They
+cover a complete chain, absent and mismatched tax years, disconnected evidence,
+mislabeled sequence links, future and third-party work, independently ambiguous
+chronology, an independently ambiguous reporting period, a rejected model-authored
+blocker, and a material contradiction. All eleven currently pass. This proves the local
+fail-closed behavior for those mutations;
+it does not prove that a live model will extract every relevant fact correctly.
 
 ## Remaining Limits
 
