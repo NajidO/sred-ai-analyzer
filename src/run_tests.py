@@ -2300,9 +2300,36 @@ def validate_live_agent_benchmark_layer(model):
         "contradictory_work_attribution",
         "complete_two_stream_project",
         "prompt_injection_in_incomplete_source",
+        "failed_but_complete_investigation",
+        "systematic_analysis_without_prototype",
+        "missing_claimed_tax_year",
+        "conflicting_claimed_year_chronology",
+        "commercial_ab_test_only",
+        "one_uncertainty_two_investigations",
+        "two_streams_with_incomplete_chains",
+        "qualitative_complete_investigation",
     }
     if case_ids != required_case_ids:
         raise AssertionError("The live benchmark lost one or more required blind cases.")
+    smoke_cases = live_agent_benchmark.select_benchmark_cases(
+        benchmark_data,
+        suite="smoke",
+    )
+    full_cases = live_agent_benchmark.select_benchmark_cases(
+        benchmark_data,
+        suite="full",
+    )
+    selected_extended_case = live_agent_benchmark.select_benchmark_cases(
+        benchmark_data,
+        selected_case_ids=["qualitative_complete_investigation"],
+        suite="smoke",
+    )
+    if len(smoke_cases) != 8 or len(full_cases) != 16:
+        raise AssertionError("The live benchmark suite tiers selected the wrong cases.")
+    if [case["id"] for case in selected_extended_case] != [
+        "qualitative_complete_investigation"
+    ]:
+        raise AssertionError("Explicit case selection did not override the smoke tier.")
 
     for case in cases:
         context = build_local_context(
@@ -2333,6 +2360,15 @@ def validate_live_agent_benchmark_layer(model):
     expect_invalid(invalid, "Duplicate live benchmark case ID")
 
     invalid = clone_benchmark()
+    invalid["cases"][0]["smoke"] = "yes"
+    expect_invalid(invalid, "field smoke must be boolean")
+
+    invalid = clone_benchmark()
+    for case in invalid["cases"]:
+        case["smoke"] = False
+    expect_invalid(invalid, "requires at least one smoke case")
+
+    invalid = clone_benchmark()
     invalid["cases"][0]["expected"]["blocked_lines_include"] = ["999"]
     expect_invalid(invalid, "invalid T661 lines")
 
@@ -2346,6 +2382,10 @@ def validate_live_agent_benchmark_layer(model):
     expect_invalid(invalid, "minimum_streams exceeds maximum_streams")
 
     invalid = clone_benchmark()
+    invalid["cases"][0]["expected"]["minimum_streams"] = True
+    expect_invalid(invalid, "minimum_streams must be non-negative")
+
+    invalid = clone_benchmark()
     invalid["cases"][0]["expected"][
         "forbidden_claimed_year_evidence_categories"
     ] = ["uncertainty"]
@@ -2354,6 +2394,17 @@ def validate_live_agent_benchmark_layer(model):
     invalid = clone_benchmark()
     invalid["cases"][1]["expected"]["required_question_term_groups"] = [[]]
     expect_invalid(invalid, "required_question_term_groups")
+
+    try:
+        live_agent_benchmark.select_benchmark_cases(
+            benchmark_data,
+            selected_case_ids=["missing_case"],
+        )
+    except ValueError as exc:
+        if "Unknown live benchmark case IDs" not in str(exc):
+            raise AssertionError(f"Unexpected case selection error: {exc}") from exc
+    else:
+        raise AssertionError("The live benchmark accepted an unknown case ID.")
 
     def canonical_report(case):
         expected = case["expected"]
@@ -2474,6 +2525,34 @@ def validate_live_agent_benchmark_layer(model):
                 + "; ".join(evaluation["failures"])
             )
 
+    safety_metrics = live_agent_benchmark.summarize_safety_metrics([
+        {
+            "id": "false_ready_fixture",
+            "expected_decision": "needs_more_information",
+            "passed": False,
+            "observed": {
+                "drafting_decision": "draft_ready",
+                "draft_artifacts_present": True,
+            },
+        },
+        {
+            "id": "false_block_fixture",
+            "expected_decision": "draft_ready",
+            "passed": False,
+            "observed": {
+                "drafting_decision": "needs_more_information",
+                "draft_artifacts_present": False,
+            },
+        },
+    ])
+    if (
+        safety_metrics["false_ready_cases"] != 1
+        or safety_metrics["false_block_cases"] != 1
+        or safety_metrics["failed_safety_controls"] != 1
+        or safety_metrics["failed_quality_controls"] != 1
+    ):
+        raise AssertionError("The live benchmark safety metrics hid a failure mode.")
+
     ready_case = case_by_id["complete_single_stream"]
     wrong_year_report = json.loads(json.dumps(reports[ready_case["id"]]))
     wrong_year_report["evidence_graph"]["claimed_tax_year"] = "2024"
@@ -2585,6 +2664,12 @@ def validate_live_agent_benchmark_layer(model):
                 raise AssertionError("The live runner did not save its complete artifact set.")
             if result["passed"] != 1 or result["usage"]["total_tokens"] != 18:
                 raise AssertionError("The live runner lost its score or token totals.")
+            if (
+                result["suite"] != "selected"
+                or result["safety_metrics"]["false_ready_cases"] != 0
+                or result["safety_metrics"]["failed_safety_controls"] != 0
+            ):
+                raise AssertionError("The live runner reported incorrect safety metrics.")
             saved_summary = json.loads(
                 (output_dir / "summary.json").read_text(encoding="utf-8")
             )
@@ -2620,6 +2705,8 @@ def validate_live_agent_benchmark_layer(model):
                 "type"
             ) != "RuntimeError":
                 raise AssertionError("The live runner did not preserve a case failure.")
+            if result["safety_metrics"]["failed_safety_controls"] != 1:
+                raise AssertionError("The live runner hid a failed blocked-case control.")
             if not (output_dir / f"{artifact_case['id']}.md").is_file():
                 raise AssertionError("The live runner omitted its failure report artifact.")
     finally:

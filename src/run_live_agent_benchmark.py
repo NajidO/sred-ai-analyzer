@@ -25,6 +25,8 @@ DEFAULT_OUTPUT_ROOT = BASE_DIR / "benchmark_results"
 T661_LINES = ("242", "244", "246")
 DRAFT_READY = "draft_ready"
 NEEDS_MORE_INFORMATION = "needs_more_information"
+BENCHMARK_SCHEMA_VERSION = 1
+BENCHMARK_SUITES = {"smoke", "full"}
 
 
 def validate_benchmark_data(benchmark_data):
@@ -34,6 +36,14 @@ def validate_benchmark_data(benchmark_data):
         "name"
     ].strip():
         raise ValueError("The live benchmark requires a non-empty name.")
+    if benchmark_data.get("schema_version") != BENCHMARK_SCHEMA_VERSION:
+        raise ValueError(
+            f"The live benchmark requires schema_version {BENCHMARK_SCHEMA_VERSION}."
+        )
+    if not isinstance(benchmark_data.get("description"), str) or not benchmark_data[
+        "description"
+    ].strip():
+        raise ValueError("The live benchmark requires a non-empty description.")
     cases = benchmark_data.get("cases")
     if not isinstance(cases, list) or not cases:
         raise ValueError("The live benchmark requires at least one case.")
@@ -42,7 +52,7 @@ def validate_benchmark_data(benchmark_data):
     for case in cases:
         if not isinstance(case, dict):
             raise ValueError("Every live benchmark case must be an object.")
-        required = {"id", "category", "description", "text", "expected"}
+        required = {"id", "category", "description", "smoke", "text", "expected"}
         missing = sorted(required - set(case))
         if missing:
             raise ValueError(
@@ -61,6 +71,8 @@ def validate_benchmark_data(benchmark_data):
             raise ValueError(f"Case {case_id} requires a category.")
         if not isinstance(case["description"], str) or not case["description"].strip():
             raise ValueError(f"Case {case_id} requires a description.")
+        if not isinstance(case["smoke"], bool):
+            raise ValueError(f"Case {case_id} field smoke must be boolean.")
         text = case["text"]
         if isinstance(text, list):
             if not text or not all(isinstance(item, str) and item.strip() for item in text):
@@ -142,8 +154,12 @@ def validate_benchmark_data(benchmark_data):
             raise ValueError(f"Case {case_id} requires valid eligibility signals.")
 
         expected_year = expected.get("claimed_tax_year")
-        if not isinstance(expected_year, str) or not re.fullmatch(r"\d{4}", expected_year):
-            raise ValueError(f"Case {case_id} requires a four-digit claimed tax year.")
+        if not isinstance(expected_year, str) or (
+            expected_year and not re.fullmatch(r"\d{4}", expected_year)
+        ):
+            raise ValueError(
+                f"Case {case_id} claimed tax year must be empty or four digits."
+            )
         question_groups = expected.get("required_question_term_groups", [])
         if not isinstance(question_groups, list) or not all(
             isinstance(group, list)
@@ -165,7 +181,9 @@ def validate_benchmark_data(benchmark_data):
             "minimum_follow_up_questions",
         ):
             value = expected.get(field)
-            if value is not None and (not isinstance(value, int) or value < 0):
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+            ):
                 raise ValueError(f"Case {case_id} field {field} must be non-negative.")
         for minimum_field, maximum_field in (
             ("minimum_streams", "maximum_streams"),
@@ -177,6 +195,25 @@ def validate_benchmark_data(benchmark_data):
                 raise ValueError(
                     f"Case {case_id} field {minimum_field} exceeds {maximum_field}."
                 )
+    if not any(case["smoke"] for case in cases):
+        raise ValueError("The live benchmark requires at least one smoke case.")
+
+
+def select_benchmark_cases(benchmark_data, selected_case_ids=None, suite="smoke"):
+    if suite not in BENCHMARK_SUITES:
+        raise ValueError(
+            "Live benchmark suite must be one of: " + ", ".join(sorted(BENCHMARK_SUITES))
+        )
+    selected = set(selected_case_ids or [])
+    case_ids = {case["id"] for case in benchmark_data["cases"]}
+    unknown = selected - case_ids
+    if unknown:
+        raise ValueError("Unknown live benchmark case IDs: " + ", ".join(sorted(unknown)))
+    if selected:
+        return [case for case in benchmark_data["cases"] if case["id"] in selected]
+    if suite == "smoke":
+        return [case for case in benchmark_data["cases"] if case["smoke"]]
+    return list(benchmark_data["cases"])
 
 
 def case_text(case):
@@ -320,11 +357,15 @@ def evaluate_report(case, report):
                 + ")"
             )
 
-    t661_lines = report.get("t661_lines", {})
+    raw_t661_lines = report.get("t661_lines", {})
+    t661_lines = raw_t661_lines
     if not isinstance(t661_lines, dict):
         failures.append("report returned an invalid T661 line collection")
         t661_lines = {}
     line_values = [str(report.get(f"line_{line}", "")).strip() for line in T661_LINES]
+    draft_artifacts_present = bool(
+        raw_t661_lines or any(line_values) or report.get("claim_support")
+    )
     if decision == DRAFT_READY:
         line_objects = [t661_lines.get(line) for line in T661_LINES]
         mapped_line_values = [
@@ -368,7 +409,7 @@ def evaluate_report(case, report):
         ):
             if stages.get(stage) not in {"passed", "complete"}:
                 failures.append(f"draft-ready report stage {stage} did not pass")
-    elif t661_lines or any(line_values) or report.get("claim_support"):
+    elif draft_artifacts_present:
         failures.append("blocked report retained partial T661 prose or claim support")
 
     return {
@@ -389,7 +430,40 @@ def evaluate_report(case, report):
                 0,
             ),
             "follow_up_questions": len(questions),
+            "draft_artifacts_present": draft_artifacts_present,
         },
+    }
+
+
+def summarize_safety_metrics(results):
+    expected_ready = [
+        item for item in results if item["expected_decision"] == DRAFT_READY
+    ]
+    expected_blocked = [
+        item
+        for item in results
+        if item["expected_decision"] == NEEDS_MORE_INFORMATION
+    ]
+    false_ready = [
+        item
+        for item in expected_blocked
+        if item.get("observed", {}).get("drafting_decision") == DRAFT_READY
+        or item.get("observed", {}).get("draft_artifacts_present")
+    ]
+    false_block = [
+        item
+        for item in expected_ready
+        if item.get("observed", {}).get("drafting_decision") != DRAFT_READY
+    ]
+    return {
+        "expected_ready_cases": len(expected_ready),
+        "expected_blocked_cases": len(expected_blocked),
+        "false_ready_cases": len(false_ready),
+        "false_ready_case_ids": [item["id"] for item in false_ready],
+        "false_block_cases": len(false_block),
+        "false_block_case_ids": [item["id"] for item in false_block],
+        "failed_safety_controls": sum(not item["passed"] for item in expected_blocked),
+        "failed_quality_controls": sum(not item["passed"] for item in expected_ready),
     }
 
 
@@ -406,7 +480,17 @@ def render_summary(result):
         "=" * 88,
         f"Model: {result['model']}",
         f"Reasoning effort: {result['reasoning_effort']}",
+        f"Suite: {result['suite']}",
         f"Passed: {result['passed']}/{result['total']} ({result['score']:.0%})",
+        (
+            "Safety metrics: "
+            f"false_ready={result['safety_metrics']['false_ready_cases']}, "
+            f"false_block={result['safety_metrics']['false_block_cases']}, "
+            "failed_blocked_case_controls="
+            f"{result['safety_metrics']['failed_safety_controls']}, "
+            "failed_ready_case_controls="
+            f"{result['safety_metrics']['failed_quality_controls']}"
+        ),
         (
             "Token usage: "
             f"input={result['usage'].get('input_tokens', 'unavailable')}, "
@@ -445,17 +529,14 @@ def run_live_benchmark(
     classifier,
     output_dir,
     selected_case_ids=None,
+    suite="smoke",
 ):
     validate_benchmark_data(benchmark_data)
-    selected = set(selected_case_ids or [])
-    unknown = selected - {case["id"] for case in benchmark_data["cases"]}
-    if unknown:
-        raise ValueError("Unknown live benchmark case IDs: " + ", ".join(sorted(unknown)))
-    cases = [
-        case
-        for case in benchmark_data["cases"]
-        if not selected or case["id"] in selected
-    ]
+    cases = select_benchmark_cases(
+        benchmark_data,
+        selected_case_ids=selected_case_ids,
+        suite=suite,
+    )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -490,6 +571,7 @@ def run_live_benchmark(
                 "id": case["id"],
                 "category": case["category"],
                 "description": case["description"],
+                "expected_decision": case["expected"]["drafting_decision"],
                 **evaluation,
                 "usage": usage,
                 "report_path": str(report_path.resolve()),
@@ -530,6 +612,7 @@ def run_live_benchmark(
                 "id": case["id"],
                 "category": case["category"],
                 "description": case["description"],
+                "expected_decision": case["expected"]["drafting_decision"],
                 "passed": False,
                 "failures": ["agent execution failed"],
                 "observed": {},
@@ -544,12 +627,14 @@ def run_live_benchmark(
         "name": benchmark_data["name"],
         "model": model,
         "reasoning_effort": reasoning_effort,
+        "suite": "selected" if selected_case_ids else suite,
         "passed": passed,
         "total": len(results),
         "score": passed / len(results) if results else 0,
         "usage": usage_total,
         "results": results,
     }
+    result["safety_metrics"] = summarize_safety_metrics(results)
     summary_text = render_summary(result)
     (output_dir / "summary.md").write_text(summary_text + "\n", encoding="utf-8")
     (output_dir / "summary.json").write_text(
@@ -586,6 +671,12 @@ def build_parser():
         dest="case_ids",
         help="Run one case ID; repeat to select several cases.",
     )
+    parser.add_argument(
+        "--suite",
+        choices=sorted(BENCHMARK_SUITES),
+        default="smoke",
+        help="Run smoke cases or the full extended set (default: %(default)s).",
+    )
     parser.add_argument("--output-dir", help="Directory for reports and result JSON.")
     parser.add_argument(
         "--dry-run",
@@ -606,15 +697,14 @@ def main():
     benchmark_data = json.loads(benchmark_path.read_text(encoding="utf-8"))
     validate_benchmark_data(benchmark_data)
 
-    selected = set(args.case_ids or [])
-    cases = [
-        case
-        for case in benchmark_data["cases"]
-        if not selected or case["id"] in selected
-    ]
-    unknown = selected - {case["id"] for case in benchmark_data["cases"]}
-    if unknown:
-        raise SystemExit("Unknown live benchmark case IDs: " + ", ".join(sorted(unknown)))
+    try:
+        cases = select_benchmark_cases(
+            benchmark_data,
+            selected_case_ids=args.case_ids,
+            suite=args.suite,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     classifier = load_classifier()
     if args.dry_run:
@@ -643,6 +733,7 @@ def main():
             classifier=classifier,
             output_dir=output_dir,
             selected_case_ids=args.case_ids,
+            suite=args.suite,
         )
     except (RuntimeError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc

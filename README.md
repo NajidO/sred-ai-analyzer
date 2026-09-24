@@ -293,11 +293,14 @@ quality.
 
 ## Run The Live Semantic Agent Benchmark
 
-The live benchmark sends eight synthetic blind cases through the complete model-backed
-agent. The cases cover a complete single investigation, missing results and advancement,
-future-only work, routine vendor configuration, prior-year-only investigation,
-contradictory work attribution, a complete two-stream project, and an instruction
-embedded in untrusted client text.
+The live benchmark contains 16 synthetic blind cases for the complete model-backed
+agent. The default eight-case smoke suite covers a complete single investigation,
+missing results and advancement, future-only work, routine vendor configuration,
+prior-year-only investigation, contradictory work attribution, a complete two-stream
+project, and an instruction embedded in untrusted client text. The full suite adds an
+unsuccessful but complete investigation, analysis without a physical prototype, a
+missing claim year, contradictory chronology, commercial A/B testing, two SIS paths
+for one TU, incomplete chains across two streams, and a complete qualitative result.
 
 Validate the fixture contract and run all local preparation without an API request:
 
@@ -312,10 +315,16 @@ venv/bin/python src/run_live_agent_benchmark.py \
   --case incomplete_results_and_advancement
 ```
 
-Run all eight cases after setting `OPENAI_API_KEY`:
+Run the eight smoke cases after setting `OPENAI_API_KEY`:
 
 ```bash
 venv/bin/python src/run_live_agent_benchmark.py
+```
+
+Run all 16 cases for a wider release-candidate evaluation:
+
+```bash
+venv/bin/python src/run_live_agent_benchmark.py --suite full
 ```
 
 Each real run saves the rendered report and raw structured JSON for every case plus
@@ -323,8 +332,10 @@ machine-readable and Markdown summaries under a timestamped `benchmark_results/`
 directory. The scorer checks the claimed tax year, accepted and prohibited claimed-year
 evidence, TU stream and SIS sequence counts, contradictions, attribution conflicts,
 drafting decision, blocked lines, structure mode, question concepts, complete claim
-support, and every mandatory audit stage. It fails the process if any case fails unless
-`--no-fail-exit` is supplied.
+support, and every mandatory audit stage. The summary reports false-ready, false-block,
+failed blocked-case controls, and failed ready-case controls separately so aggregate
+accuracy cannot hide a dangerous drafting failure. It fails the process if any case
+fails unless `--no-fail-exit` is supplied.
 
 The full benchmark can make up to four model calls for each complete case and two for
 each blocked case. It therefore has nonzero API cost and latency. Use `--case` while
@@ -358,7 +369,7 @@ Report strategy planner checks: PASS
 Semantic evidence-agent checks: PASS
 T661 capability benchmark: 29/29
 Semantic evidence and structure benchmark: 16/16
-Live benchmark contract and false-positive scorer checks: PASS (8 cases)
+Live benchmark contract and false-positive scorer checks: PASS (16 cases; 8 smoke)
 Live model benchmark: NOT RUN (API key required)
 Incomplete intake gaps detected: 10/10
 Incomplete intake T661 drafts generated: 0

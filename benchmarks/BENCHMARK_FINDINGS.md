@@ -173,12 +173,16 @@ evidence and structure cases currently pass.
 
 ## Live Model Benchmark Contract
 
-`live_agent_benchmark.json` defines eight synthetic blind cases that run through the
-complete model-backed pipeline rather than controlled mock responses. They cover one
-complete SIS, incomplete results and advancement, future-only plans, routine vendor
-configuration, a prior-year investigation followed by claimed-year implementation,
-conflicting claimant/vendor attribution, two complete TU/SIS streams, and an instruction
-embedded in untrusted client material.
+`live_agent_benchmark.json` defines 16 synthetic blind cases that run through the
+complete model-backed pipeline rather than controlled mock responses. The eight-case
+smoke tier covers one complete SIS, incomplete results and advancement, future-only
+plans, routine vendor configuration, a prior-year investigation followed by claimed-year
+implementation, conflicting claimant/vendor attribution, two complete TU/SIS streams,
+and an instruction embedded in untrusted client material. The full tier adds attempted
+advancement where every approach failed, systematic analysis without a prototype, a
+missing reporting period, contradictory experiment chronology, routine commercial A/B
+testing, two complete SIS paths for one TU, incomplete evidence split across two streams,
+and a precise qualitative result with no numerical measurement.
 
 `run_live_agent_benchmark.py` validates the fixture, runs cases sequentially, saves every
 rendered report and structured response, aggregates token usage, and returns a failing
@@ -189,7 +193,9 @@ specific question concepts; structure mode; complete claim maps; and all indepen
 audit stages. Offline tests mutate both the fixture and canonical outputs to prove the
 scorer rejects impossible contracts, future work treated as claimed-year results,
 wrong years, vague questions, partial prose, inconsistent line fields, missing claim
-coverage, and failed final audits.
+coverage, and failed final audits. Result summaries count false-ready, false-block,
+failed blocked-case controls, and failed ready-case controls separately rather than
+hiding those outcomes inside one aggregate score.
 
 The fixture and scorer currently pass all offline contract tests. A live score is not
 reported because no OpenAI API request has been run in this environment. This distinction
@@ -221,9 +227,10 @@ evidence of actual model extraction or drafting quality.
 
 ## Next Benchmark Step
 
-First run the eight-case live benchmark and inspect every saved extraction, audit,
-question, and T661 draft rather than relying on the aggregate score. Then build a blinded
-set from de-identified historical project records labelled independently by at least two
+First run the eight-case smoke benchmark, then the 16-case full benchmark, and inspect
+every saved extraction, audit, question, and T661 draft rather than relying on the
+aggregate score. Then build a blinded set from de-identified historical project records
+labelled independently by at least two
 experienced SR&ED reviewers. Measure line-level false-ready and false-block rates, stream
 quality, unsupported-fact rate, question usefulness, and reviewer agreement. Keep that
 set outside development and run it only at release candidates so it remains a genuine
