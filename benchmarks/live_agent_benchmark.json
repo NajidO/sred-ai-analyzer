@@ -202,12 +202,19 @@
       "category": "contradiction_and_attribution",
       "description": "Directly conflicting accounts of who performed the experiments must block claimant drafting and expose the conflict.",
       "smoke": true,
-      "text": [
-        "## Reporting period\nThe claimed tax year ended September 30, 2025.",
-        "## Technical account\nThe objective was to keep coating variation below 3%. The standard spray path produced 12% variation, and supplier settings could not predict deposition over the curved surface. It was unknown whether synchronized nozzle acceleration could maintain uniform deposition.",
-        "## Investigation account A\nThe project manager states that claimant engineers hypothesized that synchronized acceleration would prevent edge pooling. The project manager states that claimant engineers tested four paths during 2025, observed 2.6% variation on the fourth path, concluded that acceleration timing controlled edge pooling, and established the relationship between path curvature and required acceleration.",
-        "## Investigation account B\nA signed vendor statement says the vendor independently designed and performed all four experiments using its own facility and staff. It says the claimant did not direct or perform the experiments and only installed the vendor's final package. Both accounts refer to the same four tests and cannot both be correct.",
-        "## Records\nPath files, measurement sheets, photographs, and the two conflicting signed statements are available."
+      "documents": [
+        {
+          "name": "client_questionnaire.md",
+          "text": "## Reporting period\nThe claimed tax year ended September 30, 2025.\n\n## Technical account\nThe objective was to keep coating variation below 3%. The standard spray path produced 12% variation, and supplier settings could not predict deposition over the curved surface. It was unknown whether synchronized nozzle acceleration could maintain uniform deposition.\n\n## Investigation account A\nThe project manager states that claimant engineers hypothesized that synchronized acceleration would prevent edge pooling. The project manager states that claimant engineers tested four paths during 2025, observed 2.6% variation on the fourth path, concluded that acceleration timing controlled edge pooling, and established the relationship between path curvature and required acceleration."
+        },
+        {
+          "name": "signed_vendor_statement.md",
+          "text": "## Investigation account B\nA signed vendor statement says the vendor independently designed and performed all four experiments using its own facility and staff. It says the claimant did not direct or perform the experiments and only installed the vendor's final package. Both accounts refer to the same four tests and cannot both be correct."
+        },
+        {
+          "name": "records_index.txt",
+          "text": "## Records\nPath files, measurement sheets, photographs, and the two conflicting signed statements are available."
+        }
       ],
       "expected": {
         "claimed_tax_year": "2025",

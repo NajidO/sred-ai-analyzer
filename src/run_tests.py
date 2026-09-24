@@ -19,6 +19,8 @@ from evidence_mapper import map_to_sred_framework
 from evidence_agent import (
     apply_evidence_audit,
     assess_evidence_graph,
+    build_evidence_audit_input,
+    build_evidence_extraction_input,
     build_evidence_structure_plan,
     normalize_evidence_graph,
     validate_evidence_audit_payload,
@@ -56,7 +58,6 @@ from run_semantic_evidence_benchmark import (
     run_benchmark as run_semantic_evidence_benchmark,
 )
 from run_live_agent_benchmark import (
-    case_text as live_benchmark_case_text,
     evaluate_report as evaluate_live_agent_report,
     validate_benchmark_data as validate_live_benchmark_data,
 )
@@ -69,6 +70,11 @@ from technical_report import (
     generate_technical_report_for_case,
     render_technical_report,
     word_count,
+)
+from source_package import (
+    assemble_source_package,
+    render_source_package_for_model,
+    validate_source_documents,
 )
 
 
@@ -1138,6 +1144,335 @@ def build_grounding_audit_fixture(draft_payload, rejected_claim_id=None):
     }
 
 
+def validate_source_package_layer(model):
+    source_text, raw_graph = build_semantic_evidence_fixture()
+    source_lines = source_text.splitlines()
+
+    with TemporaryDirectory() as temp_dir:
+        package_dir = Path(temp_dir)
+        questionnaire_path = package_dir / "questionnaire.md"
+        records_path = package_dir / "engineering_notes.txt"
+        empty_path = package_dir / "empty.txt"
+        questionnaire_path.write_text(
+            "\n".join(source_lines[:5]) + "\n",
+            encoding="utf-8",
+        )
+        records_path.write_text(
+            "\n".join(source_lines[5:]) + "\n",
+            encoding="utf-8",
+        )
+        empty_path.write_text("\n", encoding="utf-8")
+
+        package_text, documents, paths = assemble_source_package([
+            questionnaire_path,
+            records_path,
+        ])
+        if paths != [questionnaire_path.resolve(), records_path.resolve()]:
+            raise AssertionError("The source package changed document order.")
+        if len(documents) != 2 or [item["id"] for item in documents] != [
+            "DOC1",
+            "DOC2",
+        ]:
+            raise AssertionError("The source package did not assign stable document IDs.")
+        if questionnaire_path.name in package_text or records_path.name in package_text:
+            raise AssertionError("Source filenames leaked into the evidence text.")
+        validate_source_documents(package_text, documents)
+
+        try:
+            assemble_source_package([questionnaire_path, questionnaire_path])
+        except ValueError as exc:
+            if "supplied more than once" not in str(exc):
+                raise
+        else:
+            raise AssertionError("A duplicate source path was accepted.")
+        try:
+            assemble_source_package([empty_path])
+        except ValueError as exc:
+            if "is empty" not in str(exc):
+                raise
+        else:
+            raise AssertionError("An empty source document was accepted.")
+
+        leading_lines_path = package_dir / "leading_lines.txt"
+        leading_lines_path.write_text("\n\nOriginal third line.", encoding="utf-8")
+        leading_text, leading_documents, _ = assemble_source_package([
+            leading_lines_path
+        ])
+        leading_locations = find_source_quote_locations(
+            leading_text,
+            "Original third line.",
+        )
+        if len(leading_locations) != 1 or not format_source_location(
+            leading_locations[0],
+            leading_documents,
+        ).startswith("DOC1 (leading_lines.txt), line 3, column 1, characters 2-"):
+            raise AssertionError("Package assembly changed original document line numbers.")
+
+        invalid_manifest = json.loads(json.dumps(documents))
+        invalid_manifest[1]["start_char"] = invalid_manifest[0]["end_char"] - 1
+        try:
+            validate_source_documents(package_text, invalid_manifest)
+        except ValueError as exc:
+            if "invalid character range" not in str(exc):
+                raise
+        else:
+            raise AssertionError("An overlapping source manifest was accepted.")
+
+        context = build_local_context(
+            package_text,
+            classifier=model,
+            source_documents=documents,
+        )
+        if context["source_documents"] != documents:
+            raise AssertionError("Local context lost the source document manifest.")
+        graph = normalize_evidence_graph(
+            raw_graph,
+            package_text,
+            source_documents=documents,
+        )
+        if graph["validation"]["accepted_evidence_items"] != 10:
+            raise AssertionError("Document-aware provenance rejected valid evidence.")
+        if graph["source_documents"] != documents:
+            raise AssertionError("The evidence graph lost source package provenance.")
+        if not graph["claimed_tax_year_source_location"].startswith(
+            "DOC2 (engineering_notes.txt), line 1, column 1"
+        ):
+            raise AssertionError("The claimed tax year lost document-level provenance.")
+        if not all(
+            item["source_location"].startswith(("DOC1 (", "DOC2 ("))
+            for item in graph["evidence_items"]
+        ):
+            raise AssertionError("Evidence locations did not identify their documents.")
+        experiment_item = next(
+            item
+            for item in graph["evidence_items"]
+            if item["category"] == "experiment_or_analysis"
+        )
+        if not experiment_item["source_location"].startswith(
+            "DOC2 (engineering_notes.txt), line 1, column 1, characters 0-"
+        ):
+            raise AssertionError("A document-local line location was calculated incorrectly.")
+
+        rendered_package = render_source_package_for_model(package_text, documents)
+        extraction_input = build_evidence_extraction_input(
+            package_text,
+            source_documents=documents,
+        )
+        audit_input = build_evidence_audit_input(
+            package_text,
+            graph,
+            source_documents=documents,
+        )
+        model_input = build_model_input(context)
+        for prompt in (
+            rendered_package,
+            extraction_input,
+            audit_input,
+            model_input,
+        ):
+            if "DOC1" not in prompt or "engineering_notes.txt" not in prompt:
+                raise AssertionError("A model stage lost source package boundaries.")
+            if str(package_dir) in prompt:
+                raise AssertionError("An absolute source path was sent to a model stage.")
+
+        report = build_evidence_agent_report(
+            graph,
+            assess_evidence_graph(graph),
+        )
+        report_text = render_llm_report(
+            report,
+            context,
+            "offline-fixture-model",
+        )
+        if "## Source Package" not in report_text:
+            raise AssertionError("The report omitted its source package manifest.")
+        if "`DOC2`: engineering_notes.txt" not in report_text:
+            raise AssertionError("The report omitted a source document name.")
+        if "DOC2 (engineering_notes.txt), line 1" not in report_text:
+            raise AssertionError("The report omitted document-local evidence provenance.")
+        if "- Claimed tax year source: DOC2 (engineering_notes.txt), line 1" not in report_text:
+            raise AssertionError("The report omitted claimed-period provenance.")
+
+        boundary_first = package_dir / "boundary_first.txt"
+        boundary_second = package_dir / "boundary_second.txt"
+        boundary_first.write_text("Boundary alpha", encoding="utf-8")
+        boundary_second.write_text("beta boundary", encoding="utf-8")
+        boundary_text, boundary_documents, _ = assemble_source_package([
+            boundary_first,
+            boundary_second,
+        ])
+        boundary_payload = {
+            "project_summary": "A boundary provenance test.",
+            "claimed_tax_year": "",
+            "claimed_tax_year_source_quote": "",
+            "technical_streams": [
+                {
+                    "id": "boundary_stream",
+                    "title": "Boundary stream",
+                    "objective": "Test source boundaries.",
+                    "relationship_to_other_streams": "Single stream.",
+                }
+            ],
+            "evidence_items": [
+                {
+                    "id": "boundary_item",
+                    "stream_id": "boundary_stream",
+                    "category": "objective",
+                    "source_quote": "alpha beta",
+                    "source_location": "model hint",
+                    "normalized_fact": "The objective concerned alpha and beta.",
+                    "certainty": "explicit",
+                    "tax_year_scope": "unspecified",
+                    "attribution": "claimant",
+                }
+            ],
+            "investigation_sequences": [],
+            "contradictions": [],
+            "routine_work": [],
+            "attribution_issues": [],
+            "extraction_notes": [],
+        }
+        boundary_graph = normalize_evidence_graph(
+            boundary_payload,
+            boundary_text,
+            source_documents=boundary_documents,
+        )
+        if not any(
+            "crossed a document boundary" in reason
+            for item in boundary_graph["validation"]["rejected_items"]
+            for reason in item["reasons"]
+        ):
+            raise AssertionError("A quote spanning two source documents was accepted.")
+
+        duplicate_first = package_dir / "duplicate_first.txt"
+        duplicate_second = package_dir / "duplicate_second.txt"
+        duplicate_quote = "The team recorded the same observation."
+        duplicate_first.write_text(duplicate_quote, encoding="utf-8")
+        duplicate_second.write_text(duplicate_quote, encoding="utf-8")
+        duplicate_text, duplicate_documents, _ = assemble_source_package([
+            duplicate_first,
+            duplicate_second,
+        ])
+        duplicate_payload = json.loads(json.dumps(boundary_payload))
+        duplicate_payload["evidence_items"][0]["source_quote"] = duplicate_quote
+        duplicate_payload["evidence_items"][0]["normalized_fact"] = duplicate_quote
+        duplicate_graph = normalize_evidence_graph(
+            duplicate_payload,
+            duplicate_text,
+            source_documents=duplicate_documents,
+        )
+        if not any(
+            "matched 2 locations" in reason
+            for item in duplicate_graph["validation"]["rejected_items"]
+            for reason in item["reasons"]
+        ):
+            raise AssertionError("A duplicate quote across documents was accepted.")
+
+        claimant_path = package_dir / "claimant_account.md"
+        vendor_path = package_dir / "vendor_account.md"
+        claimed_period_quote = "The claimed tax year ended December 31, 2025."
+        uncertainty_quote = (
+            "It was unknown whether synchronized acceleration could prevent edge pooling."
+        )
+        claimant_quote = (
+            "The project manager states that claimant engineers performed all tests."
+        )
+        vendor_quote = "The signed vendor statement says vendor staff performed all tests."
+        claimant_path.write_text(
+            "\n".join([
+                claimed_period_quote,
+                uncertainty_quote,
+                claimant_quote,
+            ]),
+            encoding="utf-8",
+        )
+        vendor_path.write_text(vendor_quote, encoding="utf-8")
+        conflict_text, conflict_documents, _ = assemble_source_package([
+            claimant_path,
+            vendor_path,
+        ])
+        conflict_payload = {
+            "project_summary": "Two documents conflict about who performed the work.",
+            "claimed_tax_year": "2025",
+            "claimed_tax_year_source_quote": claimed_period_quote,
+            "technical_streams": [
+                {
+                    "id": "coating_stream",
+                    "title": "Coating deposition",
+                    "objective": "Prevent edge pooling.",
+                    "relationship_to_other_streams": "Single stream.",
+                }
+            ],
+            "evidence_items": [
+                {
+                    "id": "u1",
+                    "stream_id": "coating_stream",
+                    "category": "uncertainty",
+                    "source_quote": uncertainty_quote,
+                    "source_location": "model hint",
+                    "normalized_fact": uncertainty_quote,
+                    "certainty": "explicit",
+                    "tax_year_scope": "claimed_year",
+                    "attribution": "claimant",
+                },
+                {
+                    "id": "a1",
+                    "stream_id": "coating_stream",
+                    "category": "supporting_record",
+                    "source_quote": claimant_quote,
+                    "source_location": "model hint",
+                    "normalized_fact": claimant_quote,
+                    "certainty": "explicit",
+                    "tax_year_scope": "claimed_year",
+                    "attribution": "claimant",
+                },
+                {
+                    "id": "a2",
+                    "stream_id": "coating_stream",
+                    "category": "supporting_record",
+                    "source_quote": vendor_quote,
+                    "source_location": "model hint",
+                    "normalized_fact": vendor_quote,
+                    "certainty": "explicit",
+                    "tax_year_scope": "claimed_year",
+                    "attribution": "third_party",
+                },
+            ],
+            "investigation_sequences": [],
+            "contradictions": [
+                {
+                    "evidence_ids": ["a1", "a2"],
+                    "description": "The two signed accounts conflict about who performed the tests.",
+                    "blocks_lines": ["244", "246"],
+                }
+            ],
+            "routine_work": [],
+            "attribution_issues": [],
+            "extraction_notes": [],
+        }
+        conflict_graph = normalize_evidence_graph(
+            conflict_payload,
+            conflict_text,
+            source_documents=conflict_documents,
+        )
+        if len(conflict_graph["contradictions"]) != 1:
+            raise AssertionError("A cross-document contradiction was not retained.")
+        conflict_locations = {
+            item["source_location"].split(" ", 1)[0]
+            for item in conflict_graph["evidence_items"]
+            if item["id"] in conflict_graph["contradictions"][0]["evidence_ids"]
+        }
+        if conflict_locations != {"DOC1", "DOC2"}:
+            raise AssertionError("Cross-document contradiction provenance was lost.")
+
+    print("\nMulti-document source package checks")
+    print("=" * 80)
+    print("PASS: assembled ordered UTF-8 evidence packages without filename leakage")
+    print("PASS: derived document-local evidence locations")
+    print("PASS: rejected boundary-spanning and duplicate cross-document quotes")
+    print("PASS: preserved a contradiction supported by two source documents")
+
+
 def validate_semantic_evidence_agent_layer():
     source_text, raw_graph = build_semantic_evidence_fixture()
     graph = normalize_evidence_graph(raw_graph, source_text)
@@ -1470,6 +1805,8 @@ def validate_semantic_evidence_agent_layer():
     tax_year_audited_graph = apply_evidence_audit(graph, tax_year_audit)
     if tax_year_audited_graph["claimed_tax_year"]:
         raise AssertionError("A semantically ambiguous claimed tax year remained accepted.")
+    if tax_year_audited_graph["claimed_tax_year_source_location"]:
+        raise AssertionError("A rejected claimed tax year retained source provenance.")
     if assess_evidence_graph(tax_year_audited_graph)["can_draft"]:
         raise AssertionError("An ambiguous claimed tax year did not block drafting.")
 
@@ -1785,8 +2122,19 @@ def validate_semantic_evidence_agent_layer():
         draft_payload,
         grounding_audit,
     ])
+    fixture_documents = [
+        {
+            "id": "DOC1",
+            "name": "semantic_fixture.md",
+            "start_char": 0,
+            "end_char": len(source_text),
+            "start_line": 1,
+            "end_line": source_text.count("\n") + 1,
+        }
+    ]
     context = {
         "project_source": source_text,
+        "source_documents": fixture_documents,
         "local_analysis": {"prediction": "borderline"},
         "local_strategy": {
             "streams": [],
@@ -1825,6 +2173,13 @@ def validate_semantic_evidence_agent_layer():
         "input"
     ]:
         raise AssertionError("The drafting stage did not receive the validated structure plan.")
+    if not all(
+        "semantic_fixture.md" in fake_client.responses.requests[index]["input"]
+        for index in (0, 1)
+    ):
+        raise AssertionError("The extraction or evidence audit lost document boundaries.")
+    if end_to_end_report["evidence_graph"]["source_documents"] != fixture_documents:
+        raise AssertionError("The four-stage agent lost source package provenance.")
     if end_to_end_report["evidence_audit"] != evidence_audit:
         raise AssertionError("The independent evidence audit was not retained in the report.")
     if end_to_end_report["grounding_audit"] != grounding_audit:
@@ -1845,7 +2200,7 @@ def validate_semantic_evidence_agent_layer():
         "Line 244: Integrated narrative",
         "## Claim-Level Grounding",
         "Independent audit: `supported`",
-        "Source location: line 1, column 1, characters 0-",
+        "Source location: DOC1 (semantic_fixture.md), line 1, column 1, characters 0-",
         "## Validated Investigation Sequences",
         "### SIS1 - TU1 / Observer bandwidth scheduling",
     ):
@@ -2332,12 +2687,20 @@ def validate_live_agent_benchmark_layer(model):
         raise AssertionError("Explicit case selection did not override the smoke tier.")
 
     for case in cases:
+        source_text, source_documents = live_agent_benchmark.case_source_package(case)
         context = build_local_context(
-            live_benchmark_case_text(case),
+            source_text,
             classifier=model,
+            source_documents=source_documents,
         )
-        if context.get("project_source") != live_benchmark_case_text(case):
+        if context.get("project_source") != source_text:
             raise AssertionError(f"Live case {case['id']} changed its source text.")
+        if context.get("source_documents") != source_documents:
+            raise AssertionError(f"Live case {case['id']} lost its source manifest.")
+        if case["id"] == "contradictory_work_attribution" and len(
+            source_documents
+        ) != 3:
+            raise AssertionError("The live cross-document conflict lost its package.")
 
     def clone_benchmark():
         return json.loads(json.dumps(benchmark_data))
@@ -2362,6 +2725,21 @@ def validate_live_agent_benchmark_layer(model):
     invalid = clone_benchmark()
     invalid["cases"][0]["smoke"] = "yes"
     expect_invalid(invalid, "field smoke must be boolean")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["documents"] = [
+        {"name": "extra.txt", "text": "Unexpected second source form."}
+    ]
+    expect_invalid(invalid, "requires exactly one of text or documents")
+
+    invalid = clone_benchmark()
+    document_case = next(
+        case
+        for case in invalid["cases"]
+        if case["id"] == "contradictory_work_attribution"
+    )
+    document_case["documents"][1]["name"] = document_case["documents"][0]["name"]
+    expect_invalid(invalid, "duplicate source document names")
 
     invalid = clone_benchmark()
     for case in invalid["cases"]:
@@ -2811,6 +3189,7 @@ validate_technical_report_layer(model)
 validate_t661_questionnaire_drafting(model)
 validate_report_strategy_layer(model)
 validate_llm_report_agent_layer()
+validate_source_package_layer(model)
 validate_semantic_evidence_agent_layer()
 validate_responses_http_client_layer()
 validate_incomplete_intake_capability(model)

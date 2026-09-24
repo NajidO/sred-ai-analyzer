@@ -18,6 +18,7 @@ from llm_report_agent import (
     request_llm_report,
     resolve_api_key,
 )
+from source_package import assemble_named_source_package
 
 
 DEFAULT_BENCHMARK = BASE_DIR / "benchmarks" / "live_agent_benchmark.json"
@@ -52,7 +53,7 @@ def validate_benchmark_data(benchmark_data):
     for case in cases:
         if not isinstance(case, dict):
             raise ValueError("Every live benchmark case must be an object.")
-        required = {"id", "category", "description", "smoke", "text", "expected"}
+        required = {"id", "category", "description", "smoke", "expected"}
         missing = sorted(required - set(case))
         if missing:
             raise ValueError(
@@ -73,12 +74,39 @@ def validate_benchmark_data(benchmark_data):
             raise ValueError(f"Case {case_id} requires a description.")
         if not isinstance(case["smoke"], bool):
             raise ValueError(f"Case {case_id} field smoke must be boolean.")
-        text = case["text"]
-        if isinstance(text, list):
-            if not text or not all(isinstance(item, str) and item.strip() for item in text):
-                raise ValueError(f"Case {case_id} has invalid text sections.")
-        elif not isinstance(text, str) or not text.strip():
-            raise ValueError(f"Case {case_id} requires non-empty text.")
+        has_text = "text" in case
+        has_documents = "documents" in case
+        if has_text == has_documents:
+            raise ValueError(
+                f"Case {case_id} requires exactly one of text or documents."
+            )
+        if has_text:
+            case_source_text = case["text"]
+            if isinstance(case_source_text, list):
+                if not case_source_text or not all(
+                    isinstance(item, str) and item.strip()
+                    for item in case_source_text
+                ):
+                    raise ValueError(f"Case {case_id} has invalid text sections.")
+            elif not isinstance(case_source_text, str) or not case_source_text.strip():
+                raise ValueError(f"Case {case_id} requires non-empty text.")
+        else:
+            documents = case["documents"]
+            if not isinstance(documents, list) or not documents:
+                raise ValueError(f"Case {case_id} requires source documents.")
+            document_names = []
+            for document in documents:
+                if not isinstance(document, dict) or set(document) != {"name", "text"}:
+                    raise ValueError(
+                        f"Case {case_id} has an invalid source document shape."
+                    )
+                if not isinstance(document["name"], str) or not document["name"].strip():
+                    raise ValueError(f"Case {case_id} has an unnamed source document.")
+                if not isinstance(document["text"], str) or not document["text"].strip():
+                    raise ValueError(f"Case {case_id} has an empty source document.")
+                document_names.append(document["name"])
+            if len(set(document_names)) != len(document_names):
+                raise ValueError(f"Case {case_id} has duplicate source document names.")
 
         expected = case["expected"]
         if not isinstance(expected, dict):
@@ -217,8 +245,15 @@ def select_benchmark_cases(benchmark_data, selected_case_ids=None, suite="smoke"
 
 
 def case_text(case):
+    return case_source_package(case)[0]
+
+
+def case_source_package(case):
+    if "documents" in case:
+        return assemble_named_source_package(case["documents"])
     text = case["text"]
-    return "\n\n".join(text) if isinstance(text, list) else text
+    source_text = "\n\n".join(text) if isinstance(text, list) else text
+    return source_text, []
 
 
 def evaluate_report(case, report):
@@ -543,9 +578,13 @@ def run_live_benchmark(
     usage_total = {}
     results = []
     for case in cases:
-        source_text = case_text(case)
+        source_text, source_documents = case_source_package(case)
         try:
-            context = build_local_context(source_text, classifier=classifier)
+            context = build_local_context(
+                source_text,
+                classifier=classifier,
+                source_documents=source_documents,
+            )
             report, usage = request_llm_report(
                 context,
                 model=model,
@@ -709,7 +748,12 @@ def main():
     classifier = load_classifier()
     if args.dry_run:
         for case in cases:
-            build_local_context(case_text(case), classifier=classifier)
+            source_text, source_documents = case_source_package(case)
+            build_local_context(
+                source_text,
+                classifier=classifier,
+                source_documents=source_documents,
+            )
         print(
             f"Validated {len(cases)} live benchmark case(s); "
             "no OpenAI API request was made."

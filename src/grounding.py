@@ -1,5 +1,7 @@
 import re
 
+from source_package import source_document_for_location
+
 
 NUMERIC_FACT_PATTERN = re.compile(
     r"(?<![A-Za-z])\d+(?:,\d{3})*(?:\.\d+)?"
@@ -78,16 +80,31 @@ def find_source_quote_locations(source_text, quote):
     return locations
 
 
-def format_source_location(location):
+def format_source_location(location, source_documents=None):
+    source_document = source_document_for_location(
+        location,
+        source_documents or [],
+    )
+    if source_document:
+        location = {
+            **location,
+            "start_char": location["start_char"] - source_document["start_char"],
+            "end_char": location["end_char"] - source_document["start_char"],
+            "start_line": location["start_line"] - source_document["start_line"] + 1,
+            "end_line": location["end_line"] - source_document["start_line"] + 1,
+        }
     line_label = (
         f"line {location['start_line']}"
         if location["start_line"] == location["end_line"]
         else f"lines {location['start_line']}-{location['end_line']}"
     )
-    return (
+    formatted = (
         f"{line_label}, column {location['start_column']}, "
         f"characters {location['start_char']}-{location['end_char']}"
     )
+    if source_document:
+        return f"{source_document['id']} ({source_document['name']}), {formatted}"
+    return formatted
 
 
 def extract_numeric_facts(text):

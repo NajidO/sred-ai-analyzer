@@ -50,6 +50,7 @@ src/
   run_tests.py
   intake_agent.py
   llm_report_agent.py
+  source_package.py
   run_capability_benchmark.py
   run_live_agent_benchmark.py
   run_semantic_evidence_benchmark.py
@@ -187,12 +188,32 @@ evidence ledger, readiness decision, TU/SIS structure rationale, questions or dr
 the support IDs used for each drafted line and claim, and the independent audit result.
 No website or hosting is required.
 
-Install the updated requirements and pass a UTF-8 text or Markdown project description:
+Install the updated requirements and pass one or more UTF-8 evidence files:
 
 ```bash
 venv/bin/python -m pip install -r requirements.txt
 venv/bin/python src/llm_report_agent.py /path/to/project.txt --show
 ```
+
+For a package containing a questionnaire, engineering notes, and test summary, preserve
+the intended document order on the command line:
+
+```bash
+venv/bin/python src/llm_report_agent.py \
+  /path/to/questionnaire.md \
+  /path/to/engineering_notes.txt \
+  /path/to/test_summary.txt \
+  --show
+```
+
+The package layer assigns stable IDs such as `DOC1` and `DOC2` and keeps filenames out
+of the evidence text, so a date or technical term in a filename cannot support a claim.
+The model sees explicit document boundaries, while local code independently maps every
+accepted quote back to its filename and document-local line, column, and character
+range. Quotes that cross a file boundary are rejected. An identical short quote found
+in multiple files remains ambiguous unless the selected contiguous passage is unique.
+Reports list the source manifest and document-aware locations without exposing absolute
+local paths.
 
 The agent uses the official OpenAI Responses API. When the optional `openai` Python
 package is installed it uses that SDK; otherwise it automatically uses the included
@@ -296,8 +317,9 @@ quality.
 The live benchmark contains 16 synthetic blind cases for the complete model-backed
 agent. The default eight-case smoke suite covers a complete single investigation,
 missing results and advancement, future-only work, routine vendor configuration,
-prior-year-only investigation, contradictory work attribution, a complete two-stream
-project, and an instruction embedded in untrusted client text. The full suite adds an
+prior-year-only investigation, cross-document contradictory work attribution, a
+complete two-stream project, and an instruction embedded in untrusted client text. The
+full suite adds an
 unsuccessful but complete investigation, analysis without a physical prototype, a
 missing claim year, contradictory chronology, commercial A/B testing, two SIS paths
 for one TU, incomplete chains across two streams, and a complete qualitative result.
@@ -367,6 +389,7 @@ Technical report generator checks: PASS
 T661 project description checks: PASS
 Report strategy planner checks: PASS
 Semantic evidence-agent checks: PASS
+Multi-document source package checks: PASS
 T661 capability benchmark: 29/29
 Semantic evidence and structure benchmark: 16/16
 Live benchmark contract and false-positive scorer checks: PASS (16 cases; 8 smoke)
@@ -392,6 +415,9 @@ treating the analyzer as reliable.
   eligibility opinion.
 - Exact quotes prove only that a statement appeared in the supplied source. They do
   not authenticate records, dates, measurements, authorship, or client claims.
+- Multi-document input currently accepts plain UTF-8 files. PDF, Word, spreadsheet,
+  image, OCR, and table extraction require a separate ingestion layer before their
+  contents can enter the grounded source package.
 - The next meaningful evaluation is a blinded set of de-identified real projects,
   independently reviewed by experienced SR&ED practitioners. Measure false-ready
   rate, false-block rate, unsupported-fact rate, stream quality, question usefulness,

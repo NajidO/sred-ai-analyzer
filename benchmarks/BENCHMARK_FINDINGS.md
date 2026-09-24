@@ -140,6 +140,14 @@ cannot withhold a report. The local layer removes unsupported or ambiguous
 classifications, sequences, and blockers, clears an unsupported claimed year, and can
 add material contradictions that the extraction stage missed.
 
+The semantic CLI also accepts ordered multi-document UTF-8 packages. A separate source
+manifest keeps filenames out of the evidence text, assigns stable document IDs, and
+maps accepted quotes to document-local line, column, and character ranges. Local checks
+reject quotes spanning document boundaries and keep repeated passages across files
+ambiguous. Regression tests also preserve a material contradiction whose supporting
+accounts come from two different documents. Absolute local paths are not sent to the
+model or written into the report.
+
 The local readiness gate requires objective, starting knowledge, standard-practice
 limit, and uncertainty evidence for Line 242; hypothesis, claimed-year investigation,
 result, conclusion, and supporting-record evidence for Line 244; and claimed-year
@@ -177,8 +185,9 @@ evidence and structure cases currently pass.
 complete model-backed pipeline rather than controlled mock responses. The eight-case
 smoke tier covers one complete SIS, incomplete results and advancement, future-only
 plans, routine vendor configuration, a prior-year investigation followed by claimed-year
-implementation, conflicting claimant/vendor attribution, two complete TU/SIS streams,
-and an instruction embedded in untrusted client material. The full tier adds attempted
+implementation, conflicting claimant/vendor attribution across three source documents,
+two complete TU/SIS streams, and an instruction embedded in untrusted client material.
+The full tier adds attempted
 advancement where every approach failed, systematic analysis without a prototype, a
 missing reporting period, contradictory experiment chronology, routine commercial A/B
 testing, two complete SIS paths for one TU, incomplete evidence split across two streams,
@@ -218,9 +227,12 @@ evidence of actual model extraction or drafting quality.
 - The test corpus has no independent CRA decisions or adjudicated real claims. It
   cannot measure precision, recall, or acceptance likelihood in production.
 - The suite does not yet cover multilingual intake, OCR errors, very long evidence
-  packages, multi-year continuations across several files, or conflicts across
-  multiple uploaded documents. Contractor and third-party attribution are covered at
-  a unit level but still need real-case validation.
+  packages, or real multi-year continuations. It covers synthetic cross-document
+  provenance and conflict handling, but not de-identified real evidence packages.
+  Contractor and third-party attribution are covered at a unit level and still need
+  real-case validation.
+- Package ingestion currently reads plain UTF-8 files. PDF, Word, spreadsheet, image,
+  OCR, and structured table extraction are not implemented.
 - Human technical and tax review remains mandatory. The tool should organize evidence,
   block unsupported drafting, and expose questions; it should not make the final
   eligibility decision.

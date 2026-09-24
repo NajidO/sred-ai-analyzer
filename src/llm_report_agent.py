@@ -23,6 +23,11 @@ from evidence_agent import (
 from grounding import find_unsupported_numeric_facts
 from report_strategy import build_report_strategy
 from responses_http_client import ResponsesHTTPClient
+from source_package import (
+    assemble_source_package,
+    render_source_package_for_model,
+    validate_source_documents,
+)
 from t661_evidence_assessment import build_t661_evidence_assessment
 from technical_report import (
     T661_LINE_WORD_LIMITS,
@@ -362,7 +367,9 @@ once and list the evidence IDs actually reviewed.
 """.strip()
 
 
-def build_local_context(source_text, classifier=None):
+def build_local_context(source_text, classifier=None, source_documents=None):
+    source_documents = list(source_documents or [])
+    validate_source_documents(source_text, source_documents)
     classifier = classifier or load_classifier()
     analysis = analyze_text(source_text, classifier)
     final_assessment = summarize_analysis(analysis)
@@ -393,6 +400,7 @@ def build_local_context(source_text, classifier=None):
 
     return make_json_safe({
         "project_source": source_text,
+        "source_documents": source_documents,
         "local_analysis": final_assessment,
         "local_strategy": strategy,
         "t661_evidence_assessment": evidence_assessment,
@@ -401,16 +409,15 @@ def build_local_context(source_text, classifier=None):
 
 
 def build_model_input(context):
+    source_documents = context.get("source_documents", [])
     analyzer_context = {
         key: value
         for key, value in context.items()
-        if key != "project_source"
+        if key not in {"project_source", "source_documents"}
     }
     return (
         "PROJECT SOURCE\n"
-        "<project_source>\n"
-        f"{context['project_source'].strip()}\n"
-        "</project_source>\n\n"
+        f"{render_source_package_for_model(context['project_source'], source_documents)}\n\n"
         "LOCAL ANALYZER CONTEXT\n"
         f"{json.dumps(analyzer_context, indent=2, sort_keys=True)}"
     )
@@ -421,6 +428,10 @@ def build_grounded_draft_input(context, graph, readiness):
     drafting_graph = {
         "claimed_tax_year": graph["claimed_tax_year"],
         "claimed_tax_year_source_quote": graph["claimed_tax_year_source_quote"],
+        "claimed_tax_year_source_location": graph.get(
+            "claimed_tax_year_source_location",
+            "",
+        ),
         "technical_streams": [
             {"id": stream["id"], "title": stream["title"]}
             for stream in graph["technical_streams"]
@@ -560,6 +571,7 @@ def request_llm_report(
         client = build_responses_client(resolve_api_key(api_key))
 
     source_text = context["project_source"]
+    source_documents = context.get("source_documents", [])
     advisory_context = {
         "local_analysis": context.get("local_analysis", {}),
         "local_strategy": context.get("local_strategy", {}),
@@ -571,6 +583,7 @@ def request_llm_report(
         model,
         local_context=advisory_context,
         reasoning_effort=reasoning_effort,
+        source_documents=source_documents,
     )
     evidence_audit, evidence_audit_usage = request_evidence_graph_audit(
         source_text,
@@ -578,6 +591,7 @@ def request_llm_report(
         client,
         model,
         reasoning_effort=reasoning_effort,
+        source_documents=source_documents,
     )
     pre_draft_usage = combine_usage(extraction_usage, evidence_audit_usage)
     try:
@@ -1662,6 +1676,7 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
     generated_at = generated_at or datetime.now().astimezone()
     local_analysis = context["local_analysis"]
     local_strategy = context["local_strategy"]
+    source_documents = context.get("source_documents", [])
     output_status = (
         "Draft for human verification, not an eligibility opinion"
         if report["drafting_decision"] == "draft_ready"
@@ -1675,6 +1690,7 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
         f"- Local classifier: `{local_analysis['prediction']}`",
         f"- AI eligibility signal: `{report['eligibility_signal']}`",
         f"- AI confidence: `{report['confidence']}`",
+        f"- Source documents: {len(source_documents) or 1}",
         f"- Status: {output_status}",
     ]
 
@@ -1684,6 +1700,13 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
             f"- Output tokens: {usage.get('output_tokens', 'unavailable')}",
             f"- Total tokens: {usage.get('total_tokens', 'unavailable')}",
         ])
+
+    if source_documents:
+        lines.extend(["", "## Source Package", ""])
+        lines.extend(
+            f"- `{document['id']}`: {document['name']}"
+            for document in source_documents
+        )
 
     lines.extend([
         "",
@@ -1871,6 +1894,9 @@ def render_llm_report(report, context, model, usage=None, generated_at=None):
             "",
             "## Validated Evidence Ledger",
             "",
+            f"- Claimed tax year: {graph['claimed_tax_year'] or 'Not established'}",
+            "- Claimed tax year source: "
+            + (graph.get("claimed_tax_year_source_location") or "Not established"),
             f"- Accepted evidence items: {validation['accepted_evidence_items']}",
             f"- Rejected evidence items: {validation['rejected_evidence_items']}",
             "- Accepted investigation sequences: "
@@ -1986,7 +2012,11 @@ def build_parser():
     parser = argparse.ArgumentParser(
         description="Run a local AI-assisted SR&ED report capability test."
     )
-    parser.add_argument("input_path", help="Path to a UTF-8 project-description file.")
+    parser.add_argument(
+        "input_paths",
+        nargs="+",
+        help="One or more UTF-8 project-description or evidence files.",
+    )
     parser.add_argument(
         "--model",
         default=os.environ.get("OPENAI_MODEL", DEFAULT_MODEL),
@@ -2010,16 +2040,19 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
-    source_path = Path(args.input_path).expanduser().resolve()
-    if not source_path.is_file():
-        raise SystemExit(f"Input file not found: {source_path}")
-
-    source_text = source_path.read_text(encoding="utf-8").strip()
-    if not source_text:
-        raise SystemExit("Input file is empty.")
+    try:
+        source_text, source_documents, source_paths = assemble_source_package(
+            args.input_paths
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     print("Running local classifier and CRA evidence analysis...")
-    context = build_local_context(source_text)
+    context = build_local_context(
+        source_text,
+        source_documents=source_documents,
+    )
+    print(f"Source documents: {len(source_documents)}")
     print(f"Local classification: {context['local_analysis']['prediction']}")
     print(
         "Local structure: "
@@ -2043,7 +2076,7 @@ def main():
     report_text = render_llm_report(report, context, args.model, usage=usage)
     report_path = save_report(
         report_text,
-        source_path,
+        source_paths[0] if len(source_paths) == 1 else Path("evidence_package"),
         output_path=args.output,
     )
     print(f"Saved report: {report_path}")
