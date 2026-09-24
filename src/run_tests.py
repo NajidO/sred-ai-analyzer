@@ -9,6 +9,7 @@ import pandas as pd
 import joblib
 
 import case_manager
+import run_live_agent_benchmark as live_agent_benchmark
 from analysis_engine import analyze_text
 from agent_assessment import build_agent_assessment
 from capability_eval import evaluate_expected_gaps
@@ -54,6 +55,11 @@ from run_capability_benchmark import run_benchmark
 from run_semantic_evidence_benchmark import (
     run_benchmark as run_semantic_evidence_benchmark,
 )
+from run_live_agent_benchmark import (
+    case_text as live_benchmark_case_text,
+    evaluate_report as evaluate_live_agent_report,
+    validate_benchmark_data as validate_live_benchmark_data,
+)
 from technical_report import (
     T661_LINE_WORD_LIMITS,
     assess_report_readiness,
@@ -81,6 +87,7 @@ BENCHMARK_PATHS = [
 SEMANTIC_EVIDENCE_BENCHMARK_PATH = (
     BASE_DIR / "benchmarks" / "semantic_evidence_gate_benchmark.json"
 )
+LIVE_AGENT_BENCHMARK_PATH = BASE_DIR / "benchmarks" / "live_agent_benchmark.json"
 
 
 def validate_training_csv():
@@ -2277,6 +2284,355 @@ def validate_semantic_evidence_benchmark():
     )
 
 
+def validate_live_agent_benchmark_layer(model):
+    benchmark_data = json.loads(
+        LIVE_AGENT_BENCHMARK_PATH.read_text(encoding="utf-8")
+    )
+    validate_live_benchmark_data(benchmark_data)
+    cases = benchmark_data["cases"]
+    case_ids = {case["id"] for case in cases}
+    required_case_ids = {
+        "complete_single_stream",
+        "incomplete_results_and_advancement",
+        "future_work_only",
+        "routine_vendor_configuration",
+        "prior_year_investigation_only",
+        "contradictory_work_attribution",
+        "complete_two_stream_project",
+        "prompt_injection_in_incomplete_source",
+    }
+    if case_ids != required_case_ids:
+        raise AssertionError("The live benchmark lost one or more required blind cases.")
+
+    for case in cases:
+        context = build_local_context(
+            live_benchmark_case_text(case),
+            classifier=model,
+        )
+        if context.get("project_source") != live_benchmark_case_text(case):
+            raise AssertionError(f"Live case {case['id']} changed its source text.")
+
+    def clone_benchmark():
+        return json.loads(json.dumps(benchmark_data))
+
+    def expect_invalid(data, expected_message):
+        try:
+            validate_live_benchmark_data(data)
+        except ValueError as exc:
+            if expected_message not in str(exc):
+                raise AssertionError(
+                    f"Unexpected live fixture validation error: {exc}"
+                ) from exc
+        else:
+            raise AssertionError(
+                f"Invalid live fixture was accepted; expected {expected_message!r}."
+            )
+
+    invalid = clone_benchmark()
+    invalid["cases"].append(invalid["cases"][0])
+    expect_invalid(invalid, "Duplicate live benchmark case ID")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["expected"]["blocked_lines_include"] = ["999"]
+    expect_invalid(invalid, "invalid T661 lines")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["expected"]["blocked_lines_include"] = ["242"]
+    expect_invalid(invalid, "requires and excludes the same blocked lines")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["expected"]["minimum_streams"] = 2
+    invalid["cases"][0]["expected"]["maximum_streams"] = 1
+    expect_invalid(invalid, "minimum_streams exceeds maximum_streams")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["expected"][
+        "forbidden_claimed_year_evidence_categories"
+    ] = ["uncertainty"]
+    expect_invalid(invalid, "both requires and forbids claimed-year categories")
+
+    invalid = clone_benchmark()
+    invalid["cases"][1]["expected"]["required_question_term_groups"] = [[]]
+    expect_invalid(invalid, "required_question_term_groups")
+
+    def canonical_report(case):
+        expected = case["expected"]
+        claimed_categories = set(
+            expected.get("required_claimed_year_evidence_categories", [])
+        )
+        categories = sorted(
+            claimed_categories
+            | set(expected.get("required_evidence_categories", []))
+        )
+        evidence_items = [
+            {
+                "id": f"E{index}",
+                "category": category,
+                "tax_year_scope": (
+                    "claimed_year" if category in claimed_categories else "unspecified"
+                ),
+            }
+            for index, category in enumerate(categories, start=1)
+        ]
+        stream_count = expected.get("minimum_streams", 0)
+        sequence_count = expected.get("minimum_sequences", 0)
+        conflict_count = max(
+            expected.get("minimum_contradictions", 0),
+            expected.get("minimum_material_conflicts", 0),
+        )
+        question_texts = [
+            f"Please provide {group[0]}."
+            for group in expected.get("required_question_term_groups", [])
+        ]
+        while len(question_texts) < expected.get("minimum_follow_up_questions", 0):
+            question_texts.append("Please provide the missing technical evidence.")
+
+        decision = expected["drafting_decision"]
+        draft_ready = decision == "draft_ready"
+        line_text = {
+            line: f"Grounded fixture prose for Line {line}." for line in ("242", "244", "246")
+        }
+        line_objects = {
+            line: {
+                "draft": line_text[line],
+                "word_count": word_count(line_text[line]),
+                "word_limit": T661_LINE_WORD_LIMITS[line],
+                "warnings": [],
+            }
+            for line in ("242", "244", "246")
+        }
+        blocked_lines = set(expected.get("blocked_lines_include", []))
+        report = {
+            "drafting_decision": decision,
+            "section_assessments": [
+                {
+                    "line_number": line,
+                    "status": "missing_evidence" if line in blocked_lines else "ready",
+                }
+                for line in ("242", "244", "246")
+            ],
+            "evidence_graph": {
+                "claimed_tax_year": expected["claimed_tax_year"],
+                "technical_streams": [
+                    {"id": f"stream_{index}"}
+                    for index in range(1, stream_count + 1)
+                ],
+                "investigation_sequences": [
+                    {"id": f"sequence_{index}"}
+                    for index in range(1, sequence_count + 1)
+                ],
+                "evidence_items": evidence_items,
+                "contradictions": [
+                    {"id": f"conflict_{index}"}
+                    for index in range(1, conflict_count + 1)
+                ],
+                "attribution_issues": [],
+                "validation": {"accepted_evidence_items": len(evidence_items)},
+            },
+            "structure_mode": expected["structure_mode_one_of"][0],
+            "eligibility_signal": expected["eligibility_signal_one_of"][0],
+            "follow_up_questions": [
+                {"question": question} for question in question_texts
+            ],
+            "t661_lines": line_objects if draft_ready else {},
+            "line_242": line_text["242"] if draft_ready else "",
+            "line_244": line_text["244"] if draft_ready else "",
+            "line_246": line_text["246"] if draft_ready else "",
+            "claim_support": (
+                [
+                    {
+                        "claim_id": f"C{line}",
+                        "line_number": line,
+                        "claim_text": line_text[line],
+                        "evidence_ids": ["E1"],
+                    }
+                    for line in ("242", "244", "246")
+                ]
+                if draft_ready
+                else []
+            ),
+            "agent_stages": [
+                {"stage": stage, "status": "passed"}
+                for stage in (
+                    "independent_evidence_audit",
+                    "readiness_gate",
+                    "grounded_drafting",
+                    "post_draft_local_audit",
+                    "independent_grounding_audit",
+                )
+            ],
+        }
+        return report
+
+    reports = {case["id"]: canonical_report(case) for case in cases}
+    case_by_id = {case["id"]: case for case in cases}
+    for case in cases:
+        evaluation = evaluate_live_agent_report(case, reports[case["id"]])
+        if not evaluation["passed"]:
+            raise AssertionError(
+                f"Canonical live result failed for {case['id']}: "
+                + "; ".join(evaluation["failures"])
+            )
+
+    ready_case = case_by_id["complete_single_stream"]
+    wrong_year_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    wrong_year_report["evidence_graph"]["claimed_tax_year"] = "2024"
+    if evaluate_live_agent_report(ready_case, wrong_year_report)["passed"]:
+        raise AssertionError("The live scorer accepted the wrong claimed tax year.")
+
+    missing_section_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    missing_section_report["section_assessments"].pop()
+    if evaluate_live_agent_report(ready_case, missing_section_report)["passed"]:
+        raise AssertionError("The live scorer accepted a missing line assessment.")
+
+    missing_support_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    missing_support_report["claim_support"] = missing_support_report[
+        "claim_support"
+    ][:1]
+    if evaluate_live_agent_report(ready_case, missing_support_report)["passed"]:
+        raise AssertionError("The live scorer accepted incomplete claim-level support.")
+
+    inconsistent_lines_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    inconsistent_lines_report["t661_lines"]["244"]["draft"] = "Different prose."
+    if evaluate_live_agent_report(ready_case, inconsistent_lines_report)["passed"]:
+        raise AssertionError("The live scorer accepted inconsistent T661 line fields.")
+
+    failed_stage_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    failed_stage_report["agent_stages"][-1]["status"] = "failed"
+    if evaluate_live_agent_report(ready_case, failed_stage_report)["passed"]:
+        raise AssertionError("The live scorer accepted a failed grounding audit.")
+
+    future_case = case_by_id["future_work_only"]
+    hallucinated_report = json.loads(json.dumps(reports[future_case["id"]]))
+    hallucinated_report["evidence_graph"]["evidence_items"].append({
+        "id": "invented_result",
+        "category": "result",
+        "tax_year_scope": "claimed_year",
+    })
+    if evaluate_live_agent_report(future_case, hallucinated_report)["passed"]:
+        raise AssertionError("The live scorer accepted future work as a claimed-year result.")
+
+    incomplete_case = case_by_id["incomplete_results_and_advancement"]
+    vague_questions_report = json.loads(json.dumps(reports[incomplete_case["id"]]))
+    vague_questions_report["follow_up_questions"] = [
+        {"question": "Can you provide more information?"},
+        {"question": "Is anything else available?"},
+    ]
+    if evaluate_live_agent_report(incomplete_case, vague_questions_report)["passed"]:
+        raise AssertionError("The live scorer accepted vague follow-up questions.")
+
+    blocked_report = json.loads(
+        json.dumps(reports["prompt_injection_in_incomplete_source"])
+    )
+    blocked_report["line_242"] = "Unsupported partial prose."
+    if evaluate_live_agent_report(
+        case_by_id["prompt_injection_in_incomplete_source"],
+        blocked_report,
+    )["passed"]:
+        raise AssertionError("The live scorer accepted prose in a blocked report.")
+
+    artifact_case = case_by_id["prompt_injection_in_incomplete_source"]
+    artifact_report = json.loads(json.dumps(reports[artifact_case["id"]]))
+    artifact_report.update({
+        "confidence": "low",
+        "overall_assessment": "The source is incomplete, so drafting is withheld.",
+        "structure_rationale": "One incomplete technical stream was identified.",
+        "structure_plan": {},
+        "technical_streams": [],
+        "factual_risks": [],
+        "review_notes": ["Human review remains required."],
+    })
+    for section in artifact_report["section_assessments"]:
+        section["supported_information"] = []
+        section["missing_information"] = ["Grounded technical evidence is missing."]
+    for question in artifact_report["follow_up_questions"]:
+        question["why_it_matters"] = "The readiness gate requires this evidence."
+        question["examples_to_check"] = ["Dated technical record"]
+    artifact_report["evidence_graph"]["validation"].update({
+        "rejected_evidence_items": 0,
+        "accepted_investigation_sequences": 0,
+        "rejected_investigation_sequences": 0,
+        "accepted_extracted_issues": 0,
+        "rejected_extracted_issues": 0,
+    })
+
+    original_request = live_agent_benchmark.request_llm_report
+    try:
+        live_agent_benchmark.request_llm_report = (
+            lambda context, model, reasoning_effort, client: (
+                artifact_report,
+                {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
+            )
+        )
+        with TemporaryDirectory() as temp_dir:
+            result = live_agent_benchmark.run_live_benchmark(
+                benchmark_data,
+                model="offline-fixture-model",
+                reasoning_effort="high",
+                client=object(),
+                classifier=model,
+                output_dir=temp_dir,
+                selected_case_ids=[artifact_case["id"]],
+            )
+            output_dir = Path(temp_dir)
+            expected_files = {
+                f"{artifact_case['id']}.md",
+                f"{artifact_case['id']}.json",
+                "summary.md",
+                "summary.json",
+            }
+            if {path.name for path in output_dir.iterdir()} != expected_files:
+                raise AssertionError("The live runner did not save its complete artifact set.")
+            if result["passed"] != 1 or result["usage"]["total_tokens"] != 18:
+                raise AssertionError("The live runner lost its score or token totals.")
+            saved_summary = json.loads(
+                (output_dir / "summary.json").read_text(encoding="utf-8")
+            )
+            if saved_summary["passed"] != 1 or saved_summary["total"] != 1:
+                raise AssertionError("The saved live summary does not match the run.")
+            report_text = (output_dir / f"{artifact_case['id']}.md").read_text(
+                encoding="utf-8"
+            )
+            if "Draft not generated" not in report_text:
+                raise AssertionError("The saved live report omitted its withholding decision.")
+
+        def raise_fixture_error(context, model, reasoning_effort, client):
+            raise RuntimeError("Synthetic API failure.")
+
+        live_agent_benchmark.request_llm_report = raise_fixture_error
+        with TemporaryDirectory() as temp_dir:
+            result = live_agent_benchmark.run_live_benchmark(
+                benchmark_data,
+                model="offline-fixture-model",
+                reasoning_effort="high",
+                client=object(),
+                classifier=model,
+                output_dir=temp_dir,
+                selected_case_ids=[artifact_case["id"]],
+            )
+            output_dir = Path(temp_dir)
+            error_payload = json.loads(
+                (output_dir / f"{artifact_case['id']}.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            if result["passed"] != 0 or error_payload.get("error", {}).get(
+                "type"
+            ) != "RuntimeError":
+                raise AssertionError("The live runner did not preserve a case failure.")
+            if not (output_dir / f"{artifact_case['id']}.md").is_file():
+                raise AssertionError("The live runner omitted its failure report artifact.")
+    finally:
+        live_agent_benchmark.request_llm_report = original_request
+
+    print("\nLive semantic agent benchmark checks")
+    print("=" * 80)
+    print(f"PASS: validated {len(cases)} live benchmark contracts")
+    print("PASS: prepared every live case locally without an API request")
+    print("PASS: rejected invalid fixtures and false-positive agent outputs")
+    print("PASS: saved complete benchmark artifacts and token totals")
+
+
 training_df = validate_training_csv()
 print("\nTraining CSV integrity check")
 print("=" * 80)
@@ -2373,3 +2729,4 @@ validate_responses_http_client_layer()
 validate_incomplete_intake_capability(model)
 validate_t661_capability_benchmarks(model)
 validate_semantic_evidence_benchmark()
+validate_live_agent_benchmark_layer(model)

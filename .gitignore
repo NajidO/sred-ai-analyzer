@@ -34,6 +34,7 @@ htmlcov/
 reports/
 case_files/
 technical_reports/
+benchmark_results/
 
 # Local trained model artifact; regenerate with src/train_sred_classifier.py
 *.joblib

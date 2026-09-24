@@ -31,6 +31,7 @@ data/
   test_examples.csv
 benchmarks/
   BENCHMARK_FINDINGS.md
+  live_agent_benchmark.json
   semantic_evidence_gate_benchmark.json
   t661_adversarial_benchmark.json
   t661_capability_benchmark.json
@@ -50,6 +51,7 @@ src/
   intake_agent.py
   llm_report_agent.py
   run_capability_benchmark.py
+  run_live_agent_benchmark.py
   run_semantic_evidence_benchmark.py
   predict_sred.py
   cra_guideline_checker.py
@@ -289,6 +291,46 @@ This benchmark exercises the deterministic validation and independent-audit appl
 layer with controlled evidence graphs. It does not score a live model's extraction
 quality.
 
+## Run The Live Semantic Agent Benchmark
+
+The live benchmark sends eight synthetic blind cases through the complete model-backed
+agent. The cases cover a complete single investigation, missing results and advancement,
+future-only work, routine vendor configuration, prior-year-only investigation,
+contradictory work attribution, a complete two-stream project, and an instruction
+embedded in untrusted client text.
+
+Validate the fixture contract and run all local preparation without an API request:
+
+```bash
+venv/bin/python src/run_live_agent_benchmark.py --dry-run
+```
+
+Run one inexpensive diagnostic case before the full set:
+
+```bash
+venv/bin/python src/run_live_agent_benchmark.py \
+  --case incomplete_results_and_advancement
+```
+
+Run all eight cases after setting `OPENAI_API_KEY`:
+
+```bash
+venv/bin/python src/run_live_agent_benchmark.py
+```
+
+Each real run saves the rendered report and raw structured JSON for every case plus
+machine-readable and Markdown summaries under a timestamped `benchmark_results/`
+directory. The scorer checks the claimed tax year, accepted and prohibited claimed-year
+evidence, TU stream and SIS sequence counts, contradictions, attribution conflicts,
+drafting decision, blocked lines, structure mode, question concepts, complete claim
+support, and every mandatory audit stage. It fails the process if any case fails unless
+`--no-fail-exit` is supplied.
+
+The full benchmark can make up to four model calls for each complete case and two for
+each blocked case. It therefore has nonzero API cost and latency. Use `--case` while
+iterating, preserve failed artifacts for diagnosis, and compare model or reasoning
+settings explicitly rather than treating a single score as production accuracy.
+
 ## Add CRA-Grounded Training Examples
 
 ```bash
@@ -316,6 +358,8 @@ Report strategy planner checks: PASS
 Semantic evidence-agent checks: PASS
 T661 capability benchmark: 29/29
 Semantic evidence and structure benchmark: 16/16
+Live benchmark contract and false-positive scorer checks: PASS (8 cases)
+Live model benchmark: NOT RUN (API key required)
 Incomplete intake gaps detected: 10/10
 Incomplete intake T661 drafts generated: 0
 Complete questionnaire T661 drafting: PASS

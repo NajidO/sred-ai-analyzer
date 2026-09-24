@@ -171,10 +171,37 @@ the TU/SIS heading assigned to their evidence, and prevents Line 244 support fro
 combining partial links from different investigation sequences. All sixteen semantic
 evidence and structure cases currently pass.
 
+## Live Model Benchmark Contract
+
+`live_agent_benchmark.json` defines eight synthetic blind cases that run through the
+complete model-backed pipeline rather than controlled mock responses. They cover one
+complete SIS, incomplete results and advancement, future-only plans, routine vendor
+configuration, a prior-year investigation followed by claimed-year implementation,
+conflicting claimant/vendor attribution, two complete TU/SIS streams, and an instruction
+embedded in untrusted client material.
+
+`run_live_agent_benchmark.py` validates the fixture, runs cases sequentially, saves every
+rendered report and structured response, aggregates token usage, and returns a failing
+exit status when any expectation is missed. Its scorer checks the extracted tax year;
+accepted, required, and prohibited claimed-year evidence; stream and coherent-sequence
+counts; contradictions and attribution issues; readiness decisions; line blocking;
+specific question concepts; structure mode; complete claim maps; and all independent
+audit stages. Offline tests mutate both the fixture and canonical outputs to prove the
+scorer rejects impossible contracts, future work treated as claimed-year results,
+wrong years, vague questions, partial prose, inconsistent line fields, missing claim
+coverage, and failed final audits.
+
+The fixture and scorer currently pass all offline contract tests. A live score is not
+reported because no OpenAI API request has been run in this environment. This distinction
+is intentional: mocked or canonical responses are evidence that the controls work, not
+evidence of actual model extraction or drafting quality.
+
 ## Remaining Limits
 
 - The benchmark score covers the sklearn and deterministic local path. Semantic-agent
   tests use controlled mock model responses and do not establish real-model accuracy.
+  The live benchmark harness now exists, but it still needs recorded runs across model
+  and reasoning settings plus human review of every generated artifact.
 - The checks infer evidence from language. They cannot verify that a test, measurement,
   date, record, or technical conclusion is true.
 - Contradiction and negation handling remains pattern-based and can miss novel
@@ -194,8 +221,10 @@ evidence and structure cases currently pass.
 
 ## Next Benchmark Step
 
-Build a blinded set from de-identified historical project records labelled independently
-by at least two experienced SR&ED reviewers. Measure line-level false-ready and
-false-block rates, stream quality, unsupported-fact rate, question usefulness, and
-reviewer agreement. Keep that set outside development and run it only at release
-candidates so it remains a genuine generalization test.
+First run the eight-case live benchmark and inspect every saved extraction, audit,
+question, and T661 draft rather than relying on the aggregate score. Then build a blinded
+set from de-identified historical project records labelled independently by at least two
+experienced SR&ED reviewers. Measure line-level false-ready and false-block rates, stream
+quality, unsupported-fact rate, question usefulness, and reviewer agreement. Keep that
+set outside development and run it only at release candidates so it remains a genuine
+generalization test.
