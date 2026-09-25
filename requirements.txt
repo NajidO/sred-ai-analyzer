@@ -1,6 +1,5 @@
 joblib==1.5.3
 numpy==2.4.6
-openai>=2.16.0,<3.0.0
 pandas==3.0.3
 python-dateutil==2.9.0.post0
 scikit-learn==1.8.0

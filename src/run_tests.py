@@ -1,26 +1,47 @@
 from pathlib import Path
 from collections import Counter
 from tempfile import TemporaryDirectory
+from io import BytesIO
 import json
+from urllib.error import HTTPError
 
 import pandas as pd
 import joblib
 
 import case_manager
+import run_live_agent_benchmark as live_agent_benchmark
 from analysis_engine import analyze_text
 from agent_assessment import build_agent_assessment
 from capability_eval import evaluate_expected_gaps
 from case_manager import build_resumed_description, inspect_case, list_cases, resume_case
 from cra_guideline_checker import check_against_cra_guidelines
 from evidence_mapper import map_to_sred_framework
+from evidence_agent import (
+    apply_evidence_audit,
+    assess_evidence_graph,
+    build_evidence_audit_input,
+    build_evidence_extraction_input,
+    build_evidence_structure_plan,
+    normalize_evidence_graph,
+    validate_evidence_audit_payload,
+)
 from explanation import generate_label_explanation
+from grounding import find_source_quote_locations, format_source_location
 from intake_agent import build_updated_description, select_intake_questions
 from llm_report_agent import (
+    build_evidence_agent_report,
     build_local_context,
     build_model_input,
+    build_responses_client,
     find_new_measurements,
+    normalize_grounded_draft,
     normalize_report_payload,
     render_llm_report,
+    request_llm_report,
+    split_draft_claims,
+    validate_draft_structure,
+    validate_line_support,
+    validate_structured_claim_support,
 )
 from case_store import (
     list_case_files,
@@ -31,7 +52,15 @@ from case_store import (
 from questions import generate_followup_questions, generate_cra_reference_questions
 from rules import extract_signals
 from report_strategy import build_report_strategy
+from responses_http_client import ResponsesHTTPClient
 from run_capability_benchmark import run_benchmark
+from run_semantic_evidence_benchmark import (
+    run_benchmark as run_semantic_evidence_benchmark,
+)
+from run_live_agent_benchmark import (
+    evaluate_report as evaluate_live_agent_report,
+    validate_benchmark_data as validate_live_benchmark_data,
+)
 from technical_report import (
     T661_LINE_WORD_LIMITS,
     assess_report_readiness,
@@ -41,6 +70,11 @@ from technical_report import (
     generate_technical_report_for_case,
     render_technical_report,
     word_count,
+)
+from source_package import (
+    assemble_source_package,
+    render_source_package_for_model,
+    validate_source_documents,
 )
 
 
@@ -54,7 +88,12 @@ VALID_LABELS = {"routine", "borderline", "needs_more_info", "strong_sred"}
 BENCHMARK_PATHS = [
     BASE_DIR / "benchmarks" / "t661_capability_benchmark.json",
     BASE_DIR / "benchmarks" / "t661_holdout_benchmark.json",
+    BASE_DIR / "benchmarks" / "t661_adversarial_benchmark.json",
 ]
+SEMANTIC_EVIDENCE_BENCHMARK_PATH = (
+    BASE_DIR / "benchmarks" / "semantic_evidence_gate_benchmark.json"
+)
+LIVE_AGENT_BENCHMARK_PATH = BASE_DIR / "benchmarks" / "live_agent_benchmark.json"
 
 
 def validate_training_csv():
@@ -857,6 +896,1590 @@ def validate_llm_report_agent_layer():
     print("PASS: enforced the local evidence gate over an AI drafting attempt")
 
 
+def build_semantic_evidence_fixture():
+    source_text = "\n".join([
+        "The team sought a controller that held vibration below 2 mm/s.",
+        "At the start, the existing fixed-gain controller reached 8 mm/s.",
+        "Published gain-tuning methods assumed a constant load and could not predict the changing-load response.",
+        "It was unknown whether a load-state observer could preserve stability as the load changed.",
+        "The team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop.",
+        "During 2025, engineers tested four bandwidth schedules under three changing-load profiles.",
+        "The selected schedule reached 1.8 mm/s, while the fastest schedule became unstable.",
+        "The team concluded that observer bandwidth had to decrease as estimated load inertia increased.",
+        "The work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.",
+        "Dated test logs, controller versions, vibration traces, and decision notes record the investigation.",
+    ])
+    evidence = [
+        ("o1", "objective", "The team sought a controller that held vibration below 2 mm/s.", "The objective was to hold vibration below 2 mm/s."),
+        ("k1", "existing_knowledge", "At the start, the existing fixed-gain controller reached 8 mm/s.", "The existing fixed-gain controller reached 8 mm/s."),
+        ("sp1", "standard_practice_limit", "Published gain-tuning methods assumed a constant load and could not predict the changing-load response.", "Published gain-tuning methods could not predict the changing-load response."),
+        ("u1", "uncertainty", "It was unknown whether a load-state observer could preserve stability as the load changed.", "It was unknown whether a load-state observer could preserve stability under changing load."),
+        ("h1", "hypothesis", "The team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop.", "The hypothesis linked load-state bandwidth scheduling to vibration and stability."),
+        ("x1", "experiment_or_analysis", "During 2025, engineers tested four bandwidth schedules under three changing-load profiles.", "Engineers tested four schedules under three profiles during 2025."),
+        ("r1", "result", "The selected schedule reached 1.8 mm/s, while the fastest schedule became unstable.", "The selected schedule reached 1.8 mm/s and the fastest was unstable."),
+        ("c1", "conclusion", "The team concluded that observer bandwidth had to decrease as estimated load inertia increased.", "The team concluded that bandwidth had to decrease as estimated inertia increased."),
+        ("a1", "advancement", "The work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.", "The work established a relationship among load inertia, observer bandwidth, and stability."),
+        ("d1", "supporting_record", "Dated test logs, controller versions, vibration traces, and decision notes record the investigation.", "Dated technical records support the investigation."),
+    ]
+    payload = {
+        "project_summary": "A changing-load vibration-control investigation.",
+        "claimed_tax_year": "2025",
+        "claimed_tax_year_source_quote": (
+            "During 2025, engineers tested four bandwidth schedules under three changing-load profiles."
+        ),
+        "technical_streams": [
+            {
+                "id": "control_stream",
+                "title": "Changing-load observer stability",
+                "objective": "Hold vibration below 2 mm/s as load changes.",
+                "relationship_to_other_streams": "Single technical stream.",
+            }
+        ],
+        "evidence_items": [
+            {
+                "id": item_id,
+                "stream_id": "control_stream",
+                "category": category,
+                "source_quote": quote,
+                "source_location": f"fixture:{index}",
+                "normalized_fact": fact,
+                "certainty": "explicit",
+                "tax_year_scope": "claimed_year",
+                "attribution": "claimant",
+            }
+            for index, (item_id, category, quote, fact) in enumerate(evidence, start=1)
+        ],
+        "investigation_sequences": [
+            {
+                "id": "observer_sis",
+                "stream_id": "control_stream",
+                "title": "Observer bandwidth scheduling",
+                "uncertainty_evidence_ids": ["u1"],
+                "hypothesis_evidence_ids": ["h1"],
+                "experiment_evidence_ids": ["x1"],
+                "result_evidence_ids": ["r1"],
+                "conclusion_evidence_ids": ["c1"],
+                "advancement_evidence_ids": ["a1"],
+            }
+        ],
+        "contradictions": [],
+        "routine_work": [],
+        "attribution_issues": [],
+        "extraction_notes": [],
+    }
+    return source_text, payload
+
+
+def build_grounded_draft_fixture():
+    return {
+        "overall_assessment": "The validated record supports a technical uncertainty, systematic investigation, and attempted advancement.",
+        "structure_mode": "integrated_narrative",
+        "structure_rationale": "One hypothesis and investigation address one uncertainty.",
+        "line_242": "The team sought to control vibration under changing load. Fixed-gain control and published constant-load tuning did not predict the response, leaving uncertainty about whether a load-state observer could preserve stability.",
+        "line_244": "The team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop. During 2025, engineers tested four schedules under three changing-load profiles. The selected schedule reached 1.8 mm/s, while the fastest schedule became unstable. The team concluded that bandwidth had to decrease as estimated load inertia increased.",
+        "line_246": "The work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.",
+        "draft_support": [
+            {
+                "line_number": "242",
+                "evidence_ids": ["E1", "E2", "E3", "E4"],
+                "coverage_note": "Covers the objective, starting knowledge, standard-practice limit, and uncertainty.",
+            },
+            {
+                "line_number": "244",
+                "evidence_ids": ["E5", "E6", "E7", "E8", "E10"],
+                "coverage_note": "Covers the hypothesis, work, result, conclusion, and records.",
+            },
+            {
+                "line_number": "246",
+                "evidence_ids": ["E9"],
+                "coverage_note": "Covers the technological knowledge established.",
+            },
+        ],
+        "claim_support": [
+            {
+                "claim_id": "C242_1",
+                "line_number": "242",
+                "claim_text": "The team sought to control vibration under changing load.",
+                "evidence_ids": ["E1"],
+            },
+            {
+                "claim_id": "C242_2",
+                "line_number": "242",
+                "claim_text": "Fixed-gain control and published constant-load tuning did not predict the response, leaving uncertainty about whether a load-state observer could preserve stability.",
+                "evidence_ids": ["E2", "E3", "E4"],
+            },
+            {
+                "claim_id": "C244_1",
+                "line_number": "244",
+                "claim_text": "The team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop.",
+                "evidence_ids": ["E5"],
+            },
+            {
+                "claim_id": "C244_2",
+                "line_number": "244",
+                "claim_text": "During 2025, engineers tested four schedules under three changing-load profiles.",
+                "evidence_ids": ["E6"],
+            },
+            {
+                "claim_id": "C244_3",
+                "line_number": "244",
+                "claim_text": "The selected schedule reached 1.8 mm/s, while the fastest schedule became unstable.",
+                "evidence_ids": ["E7"],
+            },
+            {
+                "claim_id": "C244_4",
+                "line_number": "244",
+                "claim_text": "The team concluded that bandwidth had to decrease as estimated load inertia increased.",
+                "evidence_ids": ["E8"],
+            },
+            {
+                "claim_id": "C246_1",
+                "line_number": "246",
+                "claim_text": "The work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.",
+                "evidence_ids": ["E9"],
+            },
+        ],
+        "factual_risks": [],
+        "review_notes": ["Verify technical terminology with the project lead."],
+    }
+
+
+def build_evidence_audit_fixture(
+    graph,
+    rejected_evidence_id=None,
+    rejected_dimension="category",
+    rejected_sequence_id=None,
+    rejected_sequence_dimension="relationship",
+    rejected_issue_id=None,
+    tax_year_verdict=None,
+    contradictions=None,
+):
+    dimensions = (
+        "normalized_fact",
+        "category",
+        "certainty",
+        "tax_year_scope",
+        "attribution",
+        "stream_assignment",
+    )
+    item_audits = []
+    for item in graph["evidence_items"]:
+        audit = {
+            "evidence_id": item["id"],
+            **{dimension: "supported" for dimension in dimensions},
+            "reason": "The source supports every audited evidence dimension.",
+        }
+        if item["id"] == rejected_evidence_id:
+            audit[rejected_dimension] = "unsupported"
+            audit["reason"] = "The source does not support this semantic classification."
+        item_audits.append(audit)
+    sequence_audits = []
+    for sequence in graph["investigation_sequences"]:
+        audit = {
+            "sequence_id": sequence["id"],
+            "relationship": "supported",
+            "chronology": "supported",
+            "reason": "The source supports the sequence relationship and chronology.",
+        }
+        if sequence["id"] == rejected_sequence_id:
+            audit[rejected_sequence_dimension] = "ambiguous"
+            audit["reason"] = "The source does not establish this sequence linkage."
+        sequence_audits.append(audit)
+    if tax_year_verdict is None:
+        tax_year_verdict = "supported" if graph["claimed_tax_year"] else "unsupported"
+    issue_audits = []
+    for issue in [*graph["routine_work"], *graph["attribution_issues"]]:
+        rejected = issue["id"] == rejected_issue_id
+        issue_audits.append({
+            "issue_id": issue["id"],
+            "verdict": "unsupported" if rejected else "supported",
+            "reason": (
+                "The quote does not support the extracted blocker interpretation."
+                if rejected
+                else "The source supports the extracted blocker interpretation."
+            ),
+        })
+    return {
+        "overall_assessment": (
+            "One evidence item has an unsupported semantic classification."
+            if rejected_evidence_id
+            else "Every evidence item is semantically supported by the source."
+        ),
+        "claimed_tax_year_audit": {
+            "verdict": tax_year_verdict,
+            "reason": (
+                "The quoted source establishes the claimed tax year."
+                if tax_year_verdict == "supported"
+                else "The source does not establish a unique claimed tax year."
+            ),
+        },
+        "item_audits": item_audits,
+        "sequence_audits": sequence_audits,
+        "issue_audits": issue_audits,
+        "discovered_contradictions": contradictions or [],
+    }
+
+
+def build_grounding_audit_fixture(draft_payload, rejected_claim_id=None):
+    claims = []
+    for claim in draft_payload["claim_support"]:
+        rejected = claim["claim_id"] == rejected_claim_id
+        claims.append({
+            "claim_id": claim["claim_id"],
+            "verdict": "unsupported" if rejected else "supported",
+            "reason": (
+                "The cited evidence does not establish every detail."
+                if rejected
+                else "The cited evidence supports the complete claim."
+            ),
+            "evidence_ids_reviewed": list(claim["evidence_ids"]),
+        })
+    return {
+        "overall_assessment": (
+            "One claim is unsupported."
+            if rejected_claim_id
+            else "Every drafted claim is supported by its cited evidence."
+        ),
+        "claims": claims,
+    }
+
+
+def validate_source_package_layer(model):
+    source_text, raw_graph = build_semantic_evidence_fixture()
+    source_lines = source_text.splitlines()
+
+    with TemporaryDirectory() as temp_dir:
+        package_dir = Path(temp_dir)
+        questionnaire_path = package_dir / "questionnaire.md"
+        records_path = package_dir / "engineering_notes.txt"
+        empty_path = package_dir / "empty.txt"
+        questionnaire_path.write_text(
+            "\n".join(source_lines[:5]) + "\n",
+            encoding="utf-8",
+        )
+        records_path.write_text(
+            "\n".join(source_lines[5:]) + "\n",
+            encoding="utf-8",
+        )
+        empty_path.write_text("\n", encoding="utf-8")
+
+        package_text, documents, paths = assemble_source_package([
+            questionnaire_path,
+            records_path,
+        ])
+        if paths != [questionnaire_path.resolve(), records_path.resolve()]:
+            raise AssertionError("The source package changed document order.")
+        if len(documents) != 2 or [item["id"] for item in documents] != [
+            "DOC1",
+            "DOC2",
+        ]:
+            raise AssertionError("The source package did not assign stable document IDs.")
+        if questionnaire_path.name in package_text or records_path.name in package_text:
+            raise AssertionError("Source filenames leaked into the evidence text.")
+        validate_source_documents(package_text, documents)
+
+        try:
+            assemble_source_package([questionnaire_path, questionnaire_path])
+        except ValueError as exc:
+            if "supplied more than once" not in str(exc):
+                raise
+        else:
+            raise AssertionError("A duplicate source path was accepted.")
+        try:
+            assemble_source_package([empty_path])
+        except ValueError as exc:
+            if "is empty" not in str(exc):
+                raise
+        else:
+            raise AssertionError("An empty source document was accepted.")
+
+        leading_lines_path = package_dir / "leading_lines.txt"
+        leading_lines_path.write_text("\n\nOriginal third line.", encoding="utf-8")
+        leading_text, leading_documents, _ = assemble_source_package([
+            leading_lines_path
+        ])
+        leading_locations = find_source_quote_locations(
+            leading_text,
+            "Original third line.",
+        )
+        if len(leading_locations) != 1 or not format_source_location(
+            leading_locations[0],
+            leading_documents,
+        ).startswith("DOC1 (leading_lines.txt), line 3, column 1, characters 2-"):
+            raise AssertionError("Package assembly changed original document line numbers.")
+
+        invalid_manifest = json.loads(json.dumps(documents))
+        invalid_manifest[1]["start_char"] = invalid_manifest[0]["end_char"] - 1
+        try:
+            validate_source_documents(package_text, invalid_manifest)
+        except ValueError as exc:
+            if "invalid character range" not in str(exc):
+                raise
+        else:
+            raise AssertionError("An overlapping source manifest was accepted.")
+
+        context = build_local_context(
+            package_text,
+            classifier=model,
+            source_documents=documents,
+        )
+        if context["source_documents"] != documents:
+            raise AssertionError("Local context lost the source document manifest.")
+        graph = normalize_evidence_graph(
+            raw_graph,
+            package_text,
+            source_documents=documents,
+        )
+        if graph["validation"]["accepted_evidence_items"] != 10:
+            raise AssertionError("Document-aware provenance rejected valid evidence.")
+        if graph["source_documents"] != documents:
+            raise AssertionError("The evidence graph lost source package provenance.")
+        if not graph["claimed_tax_year_source_location"].startswith(
+            "DOC2 (engineering_notes.txt), line 1, column 1"
+        ):
+            raise AssertionError("The claimed tax year lost document-level provenance.")
+        if not all(
+            item["source_location"].startswith(("DOC1 (", "DOC2 ("))
+            for item in graph["evidence_items"]
+        ):
+            raise AssertionError("Evidence locations did not identify their documents.")
+        experiment_item = next(
+            item
+            for item in graph["evidence_items"]
+            if item["category"] == "experiment_or_analysis"
+        )
+        if not experiment_item["source_location"].startswith(
+            "DOC2 (engineering_notes.txt), line 1, column 1, characters 0-"
+        ):
+            raise AssertionError("A document-local line location was calculated incorrectly.")
+
+        rendered_package = render_source_package_for_model(package_text, documents)
+        extraction_input = build_evidence_extraction_input(
+            package_text,
+            source_documents=documents,
+        )
+        audit_input = build_evidence_audit_input(
+            package_text,
+            graph,
+            source_documents=documents,
+        )
+        model_input = build_model_input(context)
+        for prompt in (
+            rendered_package,
+            extraction_input,
+            audit_input,
+            model_input,
+        ):
+            if "DOC1" not in prompt or "engineering_notes.txt" not in prompt:
+                raise AssertionError("A model stage lost source package boundaries.")
+            if str(package_dir) in prompt:
+                raise AssertionError("An absolute source path was sent to a model stage.")
+
+        report = build_evidence_agent_report(
+            graph,
+            assess_evidence_graph(graph),
+        )
+        report_text = render_llm_report(
+            report,
+            context,
+            "offline-fixture-model",
+        )
+        if "## Source Package" not in report_text:
+            raise AssertionError("The report omitted its source package manifest.")
+        if "`DOC2`: engineering_notes.txt" not in report_text:
+            raise AssertionError("The report omitted a source document name.")
+        if "DOC2 (engineering_notes.txt), line 1" not in report_text:
+            raise AssertionError("The report omitted document-local evidence provenance.")
+        if "- Claimed tax year source: DOC2 (engineering_notes.txt), line 1" not in report_text:
+            raise AssertionError("The report omitted claimed-period provenance.")
+
+        boundary_first = package_dir / "boundary_first.txt"
+        boundary_second = package_dir / "boundary_second.txt"
+        boundary_first.write_text("Boundary alpha", encoding="utf-8")
+        boundary_second.write_text("beta boundary", encoding="utf-8")
+        boundary_text, boundary_documents, _ = assemble_source_package([
+            boundary_first,
+            boundary_second,
+        ])
+        boundary_payload = {
+            "project_summary": "A boundary provenance test.",
+            "claimed_tax_year": "",
+            "claimed_tax_year_source_quote": "",
+            "technical_streams": [
+                {
+                    "id": "boundary_stream",
+                    "title": "Boundary stream",
+                    "objective": "Test source boundaries.",
+                    "relationship_to_other_streams": "Single stream.",
+                }
+            ],
+            "evidence_items": [
+                {
+                    "id": "boundary_item",
+                    "stream_id": "boundary_stream",
+                    "category": "objective",
+                    "source_quote": "alpha beta",
+                    "source_location": "model hint",
+                    "normalized_fact": "The objective concerned alpha and beta.",
+                    "certainty": "explicit",
+                    "tax_year_scope": "unspecified",
+                    "attribution": "claimant",
+                }
+            ],
+            "investigation_sequences": [],
+            "contradictions": [],
+            "routine_work": [],
+            "attribution_issues": [],
+            "extraction_notes": [],
+        }
+        boundary_graph = normalize_evidence_graph(
+            boundary_payload,
+            boundary_text,
+            source_documents=boundary_documents,
+        )
+        if not any(
+            "crossed a document boundary" in reason
+            for item in boundary_graph["validation"]["rejected_items"]
+            for reason in item["reasons"]
+        ):
+            raise AssertionError("A quote spanning two source documents was accepted.")
+
+        duplicate_first = package_dir / "duplicate_first.txt"
+        duplicate_second = package_dir / "duplicate_second.txt"
+        duplicate_quote = "The team recorded the same observation."
+        duplicate_first.write_text(duplicate_quote, encoding="utf-8")
+        duplicate_second.write_text(duplicate_quote, encoding="utf-8")
+        duplicate_text, duplicate_documents, _ = assemble_source_package([
+            duplicate_first,
+            duplicate_second,
+        ])
+        duplicate_payload = json.loads(json.dumps(boundary_payload))
+        duplicate_payload["evidence_items"][0]["source_quote"] = duplicate_quote
+        duplicate_payload["evidence_items"][0]["normalized_fact"] = duplicate_quote
+        duplicate_graph = normalize_evidence_graph(
+            duplicate_payload,
+            duplicate_text,
+            source_documents=duplicate_documents,
+        )
+        if not any(
+            "matched 2 locations" in reason
+            for item in duplicate_graph["validation"]["rejected_items"]
+            for reason in item["reasons"]
+        ):
+            raise AssertionError("A duplicate quote across documents was accepted.")
+
+        claimant_path = package_dir / "claimant_account.md"
+        vendor_path = package_dir / "vendor_account.md"
+        claimed_period_quote = "The claimed tax year ended December 31, 2025."
+        uncertainty_quote = (
+            "It was unknown whether synchronized acceleration could prevent edge pooling."
+        )
+        claimant_quote = (
+            "The project manager states that claimant engineers performed all tests."
+        )
+        vendor_quote = "The signed vendor statement says vendor staff performed all tests."
+        claimant_path.write_text(
+            "\n".join([
+                claimed_period_quote,
+                uncertainty_quote,
+                claimant_quote,
+            ]),
+            encoding="utf-8",
+        )
+        vendor_path.write_text(vendor_quote, encoding="utf-8")
+        conflict_text, conflict_documents, _ = assemble_source_package([
+            claimant_path,
+            vendor_path,
+        ])
+        conflict_payload = {
+            "project_summary": "Two documents conflict about who performed the work.",
+            "claimed_tax_year": "2025",
+            "claimed_tax_year_source_quote": claimed_period_quote,
+            "technical_streams": [
+                {
+                    "id": "coating_stream",
+                    "title": "Coating deposition",
+                    "objective": "Prevent edge pooling.",
+                    "relationship_to_other_streams": "Single stream.",
+                }
+            ],
+            "evidence_items": [
+                {
+                    "id": "u1",
+                    "stream_id": "coating_stream",
+                    "category": "uncertainty",
+                    "source_quote": uncertainty_quote,
+                    "source_location": "model hint",
+                    "normalized_fact": uncertainty_quote,
+                    "certainty": "explicit",
+                    "tax_year_scope": "claimed_year",
+                    "attribution": "claimant",
+                },
+                {
+                    "id": "a1",
+                    "stream_id": "coating_stream",
+                    "category": "supporting_record",
+                    "source_quote": claimant_quote,
+                    "source_location": "model hint",
+                    "normalized_fact": claimant_quote,
+                    "certainty": "explicit",
+                    "tax_year_scope": "claimed_year",
+                    "attribution": "claimant",
+                },
+                {
+                    "id": "a2",
+                    "stream_id": "coating_stream",
+                    "category": "supporting_record",
+                    "source_quote": vendor_quote,
+                    "source_location": "model hint",
+                    "normalized_fact": vendor_quote,
+                    "certainty": "explicit",
+                    "tax_year_scope": "claimed_year",
+                    "attribution": "third_party",
+                },
+            ],
+            "investigation_sequences": [],
+            "contradictions": [
+                {
+                    "evidence_ids": ["a1", "a2"],
+                    "description": "The two signed accounts conflict about who performed the tests.",
+                    "blocks_lines": ["244", "246"],
+                }
+            ],
+            "routine_work": [],
+            "attribution_issues": [],
+            "extraction_notes": [],
+        }
+        conflict_graph = normalize_evidence_graph(
+            conflict_payload,
+            conflict_text,
+            source_documents=conflict_documents,
+        )
+        if len(conflict_graph["contradictions"]) != 1:
+            raise AssertionError("A cross-document contradiction was not retained.")
+        conflict_locations = {
+            item["source_location"].split(" ", 1)[0]
+            for item in conflict_graph["evidence_items"]
+            if item["id"] in conflict_graph["contradictions"][0]["evidence_ids"]
+        }
+        if conflict_locations != {"DOC1", "DOC2"}:
+            raise AssertionError("Cross-document contradiction provenance was lost.")
+
+    print("\nMulti-document source package checks")
+    print("=" * 80)
+    print("PASS: assembled ordered UTF-8 evidence packages without filename leakage")
+    print("PASS: derived document-local evidence locations")
+    print("PASS: rejected boundary-spanning and duplicate cross-document quotes")
+    print("PASS: preserved a contradiction supported by two source documents")
+
+
+def validate_semantic_evidence_agent_layer():
+    source_text, raw_graph = build_semantic_evidence_fixture()
+    graph = normalize_evidence_graph(raw_graph, source_text)
+    readiness = assess_evidence_graph(graph)
+
+    if graph["validation"]["accepted_evidence_items"] != 10:
+        raise AssertionError("The evidence validator rejected a supported fixture item.")
+    if not readiness["can_draft"]:
+        raise AssertionError("A complete validated evidence graph was not draft-ready.")
+
+    topology_graph = {
+        "technical_streams": [
+            {"id": "TU1", "title": "Stream one"},
+            {"id": "TU2", "title": "Stream two"},
+        ],
+        "investigation_sequences": [
+            {"id": "SIS1", "stream_id": "TU1"},
+            {"id": "SIS2", "stream_id": "TU2"},
+        ],
+        "evidence_items": [],
+    }
+    split_plan = build_evidence_structure_plan(topology_graph)
+    if split_plan["mode"] != "split_by_uncertainty_stream":
+        raise AssertionError("Distinct TU/SIS streams did not select split structure.")
+    if split_plan["required_labels_by_line"] != {
+        "242": ["TU1", "TU2"],
+        "244": ["SIS1", "SIS2"],
+        "246": ["TU1", "TU2"],
+    }:
+        raise AssertionError("The split structure plan returned the wrong line labels.")
+
+    shared_topology = json.loads(json.dumps(topology_graph))
+    shared_topology["evidence_items"] = [{
+        "id": "E_SHARED",
+        "stream_id": "GLOBAL",
+        "category": "existing_knowledge",
+    }]
+    if build_evidence_structure_plan(shared_topology)["mode"] != "hybrid":
+        raise AssertionError("Shared multi-stream context did not select hybrid structure.")
+
+    multi_sequence_topology = {
+        "technical_streams": [{"id": "TU1", "title": "Stream one"}],
+        "investigation_sequences": [
+            {"id": "SIS1", "stream_id": "TU1"},
+            {"id": "SIS2", "stream_id": "TU1"},
+        ],
+        "evidence_items": [],
+    }
+    multi_sequence_plan = build_evidence_structure_plan(multi_sequence_topology)
+    if multi_sequence_plan["mode"] != "hybrid":
+        raise AssertionError("Multiple SIS chains in one TU did not select hybrid structure.")
+
+    structured_payload = {
+        "structure_mode": "split_by_uncertainty_stream",
+        "structure_rationale": "Separate validated streams require separate sections.",
+        "line_242": "### TU1\nFirst uncertainty.\n### TU2\nSecond uncertainty.",
+        "line_244": "### SIS1\nFirst investigation.\n### SIS2\nSecond investigation.",
+        "line_246": "### TU1\nFirst advancement.\n### TU2\nSecond advancement.",
+    }
+    validate_draft_structure(structured_payload, split_plan)
+    heading_claims = split_draft_claims(
+        "### SIS1 - Observer scheduling\n"
+        "The team tested the first schedule.\n"
+        "TU1: This prefixed sentence remains a factual claim."
+    )
+    if heading_claims != [
+        "The team tested the first schedule.",
+        "TU1: This prefixed sentence remains a factual claim.",
+    ]:
+        raise AssertionError("Structural headings were not separated from factual claims.")
+
+    missing_structure_label = json.loads(json.dumps(structured_payload))
+    missing_structure_label["line_244"] = "### SIS1\nFirst investigation."
+    try:
+        validate_draft_structure(missing_structure_label, split_plan)
+    except ValueError as exc:
+        if "omitted required Markdown structure headings: SIS2" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A multi-stream draft omitted a required SIS section.")
+
+    empty_structure_section = json.loads(json.dumps(structured_payload))
+    empty_structure_section["line_244"] = (
+        "### SIS1\n\n### SIS2\nSecond investigation."
+    )
+    try:
+        validate_draft_structure(empty_structure_section, split_plan)
+    except ValueError as exc:
+        if "SIS1 contained no substantive section content" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A required SIS heading contained no section content.")
+
+    reversed_structure = json.loads(json.dumps(structured_payload))
+    reversed_structure["line_242"] = (
+        "### TU2\nSecond uncertainty.\n### TU1\nFirst uncertainty."
+    )
+    try:
+        validate_draft_structure(reversed_structure, split_plan)
+    except ValueError as exc:
+        if "did not preserve the required TU/SIS order" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft reversed the evidence-driven stream order.")
+
+    wrong_structure_mode = json.loads(json.dumps(structured_payload))
+    wrong_structure_mode["structure_mode"] = "integrated_narrative"
+    try:
+        validate_draft_structure(wrong_structure_mode, split_plan)
+    except ValueError as exc:
+        if "ignored the evidence-driven structure mode" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft selected a structure that contradicted its graph.")
+
+    structured_evidence = []
+    structured_sequences = []
+    for sequence_number, stream_id in ((1, "TU1"), (2, "TU2")):
+        field_ids = {}
+        for category, field_prefix in (
+            ("hypothesis", "H"),
+            ("experiment_or_analysis", "X"),
+            ("result", "R"),
+            ("conclusion", "C"),
+        ):
+            evidence_id = f"E_{field_prefix}{sequence_number}"
+            field_ids[category] = evidence_id
+            structured_evidence.append({
+                "id": evidence_id,
+                "stream_id": stream_id,
+                "category": category,
+                "certainty": "explicit",
+                "tax_year_scope": "claimed_year",
+                "attribution": "claimant",
+            })
+        structured_sequences.append({
+            "id": f"SIS{sequence_number}",
+            "stream_id": stream_id,
+            "hypothesis_evidence_ids": [field_ids["hypothesis"]],
+            "experiment_evidence_ids": [field_ids["experiment_or_analysis"]],
+            "result_evidence_ids": [field_ids["result"]],
+            "conclusion_evidence_ids": [field_ids["conclusion"]],
+            "advancement_evidence_ids": [],
+        })
+    structured_claim_payload = {
+        "line_244": "### SIS1\nFirst chain.\n### SIS2\nSecond chain.",
+        "claim_support": [
+            {
+                "claim_id": "SC1",
+                "line_number": "244",
+                "claim_text": "First chain.",
+                "evidence_ids": ["E_H1", "E_X1", "E_R1", "E_C1"],
+            },
+            {
+                "claim_id": "SC2",
+                "line_number": "244",
+                "claim_text": "Second chain.",
+                "evidence_ids": ["E_H2", "E_X2", "E_R2", "E_C2"],
+            },
+        ],
+    }
+    line_244_only_plan = json.loads(json.dumps(split_plan))
+    line_244_only_plan["required_labels_by_line"]["242"] = []
+    line_244_only_plan["required_labels_by_line"]["246"] = []
+    structured_graph = {"investigation_sequences": structured_sequences}
+    structured_evidence_index = {
+        item["id"]: item for item in structured_evidence
+    }
+    structured_support = {
+        "244": {"evidence_ids": list(structured_evidence_index)}
+    }
+    validate_structured_claim_support(
+        structured_claim_payload,
+        line_244_only_plan,
+        structured_graph,
+        structured_evidence_index,
+        structured_support,
+    )
+    cross_labeled_claims = json.loads(json.dumps(structured_claim_payload))
+    cross_labeled_claims["claim_support"][0]["evidence_ids"] = [
+        "E_H2",
+        "E_X2",
+        "E_R2",
+        "E_C2",
+    ]
+    try:
+        validate_structured_claim_support(
+            cross_labeled_claims,
+            line_244_only_plan,
+            structured_graph,
+            structured_evidence_index,
+            structured_support,
+        )
+    except ValueError as exc:
+        if "Line 244 section SIS1 omitted its sequence evidence" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A SIS heading contained another sequence's grounded claims.")
+
+    if graph["evidence_items"][0]["source_location"].startswith("fixture:"):
+        raise AssertionError("A model-authored source location was trusted.")
+    if not graph["evidence_items"][0]["source_location"].startswith(
+        "line 1, column 1, characters 0-"
+    ):
+        raise AssertionError("The exact quote did not receive deterministic provenance.")
+
+    typography_source = "Heading\nThe \u201cteam\u201d tested A \u2014 B.\nConclusion"
+    typography_quote = 'The "team" tested A - B.'
+    typography_locations = find_source_quote_locations(
+        typography_source,
+        typography_quote,
+    )
+    if len(typography_locations) != 1:
+        raise AssertionError("Normalized typography did not retain source provenance.")
+    if format_source_location(typography_locations[0]) != (
+        "line 2, column 1, characters 8-32"
+    ):
+        raise AssertionError("Normalized quote provenance returned the wrong location.")
+
+    multiline_locations = find_source_quote_locations(
+        "Alpha beta\n gamma delta",
+        "beta gamma",
+    )
+    if len(multiline_locations) != 1 or format_source_location(
+        multiline_locations[0]
+    ) != "lines 1-2, column 7, characters 6-17":
+        raise AssertionError("Multi-line quote provenance returned the wrong location.")
+
+    duplicate_source = source_text + "\n" + source_text.splitlines()[0]
+    duplicate_graph = normalize_evidence_graph(raw_graph, duplicate_source)
+    duplicate_rejections = duplicate_graph["validation"]["rejected_items"]
+    if not any(
+        "matched 2 locations" in reason
+        for item in duplicate_rejections
+        for reason in item["reasons"]
+    ):
+        raise AssertionError("An ambiguous repeated source quote was accepted.")
+    duplicate_readiness = assess_evidence_graph(duplicate_graph)
+    if duplicate_readiness["sections"]["242"]["status"] != "needs_more_information":
+        raise AssertionError("Ambiguous objective provenance did not block Line 242.")
+
+    duplicated_year_quote = raw_graph["claimed_tax_year_source_quote"]
+    duplicate_year_graph = normalize_evidence_graph(
+        raw_graph,
+        source_text + "\n" + duplicated_year_quote,
+    )
+    if duplicate_year_graph["claimed_tax_year"]:
+        raise AssertionError("An ambiguous claimed tax year source quote was accepted.")
+    if not any(
+        "Claimed tax year was cleared" in note
+        for note in duplicate_year_graph["extraction_notes"]
+    ):
+        raise AssertionError("A rejected claimed tax year was not explained.")
+
+    missing_year_payload = json.loads(json.dumps(raw_graph))
+    missing_year_payload["claimed_tax_year"] = ""
+    missing_year_payload["claimed_tax_year_source_quote"] = ""
+    missing_year_graph = normalize_evidence_graph(missing_year_payload, source_text)
+    missing_year_readiness = assess_evidence_graph(missing_year_graph)
+    if missing_year_readiness["can_draft"] or set(
+        missing_year_readiness["blocked_lines"]
+    ) != {"242", "244", "246"}:
+        raise AssertionError("An absent claimed tax year did not block every T661 line.")
+    if not any(
+        item["category"] == "claimed_tax_year"
+        for item in missing_year_readiness["follow_up_questions"]
+    ):
+        raise AssertionError("A missing claimed tax year produced no targeted question.")
+
+    mismatched_year_payload = json.loads(json.dumps(raw_graph))
+    mismatched_year_payload["claimed_tax_year"] = "2026"
+    mismatched_year_graph = normalize_evidence_graph(
+        mismatched_year_payload,
+        source_text,
+    )
+    if mismatched_year_graph["claimed_tax_year"]:
+        raise AssertionError("A claimed year absent from its source quote was accepted.")
+
+    disconnected_payload = json.loads(json.dumps(raw_graph))
+    disconnected_payload["investigation_sequences"] = []
+    disconnected_graph = normalize_evidence_graph(disconnected_payload, source_text)
+    disconnected_readiness = assess_evidence_graph(disconnected_graph)
+    if disconnected_readiness["sections"]["242"]["status"] != "ready":
+        raise AssertionError("A missing SIS chain incorrectly blocked supported Line 242.")
+    if any(
+        disconnected_readiness["sections"][line]["status"] == "ready"
+        for line in ("244", "246")
+    ):
+        raise AssertionError("An unordered evidence bag satisfied Lines 244 or 246.")
+    if not any(
+        item["category"] == "investigation_sequence"
+        for item in disconnected_readiness["follow_up_questions"]
+    ):
+        raise AssertionError("A missing SIS chain produced no sequence-specific question.")
+
+    invalid_sequence_payload = json.loads(json.dumps(raw_graph))
+    invalid_sequence_payload["investigation_sequences"][0][
+        "result_evidence_ids"
+    ] = ["h1"]
+    invalid_sequence_graph = normalize_evidence_graph(
+        invalid_sequence_payload,
+        source_text,
+    )
+    if invalid_sequence_graph["investigation_sequences"]:
+        raise AssertionError("A sequence with a hypothesis mislabeled as a result passed.")
+    if not invalid_sequence_graph["validation"]["rejected_sequences"]:
+        raise AssertionError("An invalid investigation sequence was not explained.")
+
+    sequence_audit = build_evidence_audit_fixture(
+        graph,
+        rejected_sequence_id="SIS1",
+        rejected_sequence_dimension="chronology",
+    )
+    validate_evidence_audit_payload(sequence_audit, graph)
+    sequence_audited_graph = apply_evidence_audit(graph, sequence_audit)
+    sequence_audited_readiness = assess_evidence_graph(sequence_audited_graph)
+    if sequence_audited_graph["investigation_sequences"]:
+        raise AssertionError("A chronology-rejected SIS chain remained available.")
+    if any(
+        sequence_audited_readiness["sections"][line]["status"] == "ready"
+        for line in ("244", "246")
+    ):
+        raise AssertionError("A chronology-rejected SIS chain still supported drafting.")
+
+    tax_year_audit = build_evidence_audit_fixture(
+        graph,
+        tax_year_verdict="ambiguous",
+    )
+    validate_evidence_audit_payload(tax_year_audit, graph)
+    tax_year_audited_graph = apply_evidence_audit(graph, tax_year_audit)
+    if tax_year_audited_graph["claimed_tax_year"]:
+        raise AssertionError("A semantically ambiguous claimed tax year remained accepted.")
+    if tax_year_audited_graph["claimed_tax_year_source_location"]:
+        raise AssertionError("A rejected claimed tax year retained source provenance.")
+    if assess_evidence_graph(tax_year_audited_graph)["can_draft"]:
+        raise AssertionError("An ambiguous claimed tax year did not block drafting.")
+
+    omitted_sequence_audit = build_evidence_audit_fixture(graph)
+    omitted_sequence_audit["sequence_audits"] = []
+    try:
+        validate_evidence_audit_payload(omitted_sequence_audit, graph)
+    except ValueError as exc:
+        if "omitted investigation sequence IDs" not in str(exc):
+            raise
+    else:
+        raise AssertionError("An audit that omitted an SIS chain passed validation.")
+
+    unsupported_issue_payload = json.loads(json.dumps(raw_graph))
+    unsupported_issue_payload["attribution_issues"] = [{
+        "source_quote": raw_graph["evidence_items"][5]["source_quote"],
+        "description": "The source allegedly leaves the performing party unclear.",
+        "blocks_lines": ["244"],
+    }]
+    unsupported_issue_graph = normalize_evidence_graph(
+        unsupported_issue_payload,
+        source_text,
+    )
+    if assess_evidence_graph(unsupported_issue_graph)["sections"]["244"][
+        "status"
+    ] != "needs_more_information":
+        raise AssertionError("An extracted attribution issue did not block its line.")
+    issue_audit = build_evidence_audit_fixture(
+        unsupported_issue_graph,
+        rejected_issue_id="A1",
+    )
+    validate_evidence_audit_payload(issue_audit, unsupported_issue_graph)
+    issue_audited_graph = apply_evidence_audit(
+        unsupported_issue_graph,
+        issue_audit,
+    )
+    if issue_audited_graph["attribution_issues"]:
+        raise AssertionError("An unsupported extracted blocker survived its audit.")
+    if not assess_evidence_graph(issue_audited_graph)["can_draft"]:
+        raise AssertionError("A rejected false blocker continued to withhold drafting.")
+
+    omitted_issue_audit = build_evidence_audit_fixture(unsupported_issue_graph)
+    omitted_issue_audit["issue_audits"] = []
+    try:
+        validate_evidence_audit_payload(
+            omitted_issue_audit,
+            unsupported_issue_graph,
+        )
+    except ValueError as exc:
+        if "omitted extracted issue IDs" not in str(exc):
+            raise
+    else:
+        raise AssertionError("An audit that omitted an extracted blocker passed.")
+
+    prior_knowledge = json.loads(json.dumps(raw_graph))
+    prior_knowledge["evidence_items"][1]["tax_year_scope"] = "prior_year"
+    prior_knowledge["evidence_items"][1]["attribution"] = "third_party"
+    if not assess_evidence_graph(
+        normalize_evidence_graph(prior_knowledge, source_text)
+    )["can_draft"]:
+        raise AssertionError("Prior-year starting knowledge did not support Line 242.")
+
+    fabricated = json.loads(json.dumps(raw_graph))
+    fabricated["evidence_items"][0]["source_quote"] = "A fabricated source sentence."
+    fabricated_graph = normalize_evidence_graph(fabricated, source_text)
+    if fabricated_graph["validation"]["rejected_evidence_items"] != 1:
+        raise AssertionError("A fabricated source quote was not rejected.")
+    if assess_evidence_graph(fabricated_graph)["can_draft"]:
+        raise AssertionError("A graph missing a rejected objective was marked draft-ready.")
+
+    invented_number = json.loads(json.dumps(raw_graph))
+    invented_number["evidence_items"][0]["normalized_fact"] = (
+        "The objective was to hold vibration below 0.5 mm/s."
+    )
+    numeric_graph = normalize_evidence_graph(invented_number, source_text)
+    if numeric_graph["validation"]["rejected_evidence_items"] != 1:
+        raise AssertionError("Unsupported numeric content in a normalized fact was accepted.")
+
+    inferred_advancement = json.loads(json.dumps(raw_graph))
+    inferred_advancement["evidence_items"][8]["certainty"] = "inferred"
+    inferred_readiness = assess_evidence_graph(
+        normalize_evidence_graph(inferred_advancement, source_text)
+    )
+    if inferred_readiness["sections"]["246"]["status"] != "needs_more_information":
+        raise AssertionError("Inferred advancement satisfied the explicit evidence gate.")
+
+    global_result = json.loads(json.dumps(raw_graph))
+    global_result["evidence_items"][6]["stream_id"] = "GLOBAL"
+    global_graph = normalize_evidence_graph(global_result, source_text)
+    if global_graph["validation"]["rejected_evidence_items"] != 1:
+        raise AssertionError("Stream-specific result evidence was accepted as GLOBAL.")
+    if assess_evidence_graph(global_graph)["sections"]["244"]["status"] == "ready":
+        raise AssertionError("A rejected GLOBAL result still satisfied Line 244.")
+
+    future_work = json.loads(json.dumps(raw_graph))
+    future_work["evidence_items"][5]["tax_year_scope"] = "future"
+    future_readiness = assess_evidence_graph(
+        normalize_evidence_graph(future_work, source_text)
+    )
+    if future_readiness["sections"]["244"]["status"] != "needs_more_information":
+        raise AssertionError("Future work satisfied the claimed-year Line 244 gate.")
+    questions = " ".join(
+        item["question"] for item in future_readiness["follow_up_questions"]
+    )
+    if "actually performed" not in questions:
+        raise AssertionError("A missing claimed-year investigation produced no specific question.")
+
+    third_party_work = json.loads(json.dumps(raw_graph))
+    third_party_work["evidence_items"][5]["attribution"] = "third_party"
+    third_party_readiness = assess_evidence_graph(
+        normalize_evidence_graph(third_party_work, source_text)
+    )
+    if third_party_readiness["sections"]["244"]["status"] != "needs_more_information":
+        raise AssertionError("Third-party work was attributed to the claimant.")
+    attribution_questions = " ".join(
+        item["question"] for item in third_party_readiness["follow_up_questions"]
+    )
+    if "Who performed and directed" not in attribution_questions:
+        raise AssertionError("Unattributed work produced no responsibility question.")
+
+    contradicted = json.loads(json.dumps(raw_graph))
+    contradicted["contradictions"] = [
+        {
+            "id": "conflict_1",
+            "evidence_ids": ["u1", "sp1"],
+            "description": "The uncertainty and standard-practice account conflict.",
+            "blocks_lines": ["242"],
+        }
+    ]
+    contradiction_readiness = assess_evidence_graph(
+        normalize_evidence_graph(contradicted, source_text)
+    )
+    if contradiction_readiness["sections"]["242"]["status"] != "needs_more_information":
+        raise AssertionError("A material contradiction did not block its T661 line.")
+
+    draft_payload = build_grounded_draft_fixture()
+    validated_draft = normalize_grounded_draft(
+        draft_payload,
+        source_text,
+        graph,
+        readiness,
+    )
+    if validated_draft != draft_payload:
+        raise AssertionError("A supported grounded draft did not pass the local audit unchanged.")
+    unaudited_report = build_evidence_agent_report(
+        graph,
+        readiness,
+        draft_payload=draft_payload,
+    )
+    if unaudited_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("The report builder released a draft without both audits.")
+    if unaudited_report["t661_lines"]:
+        raise AssertionError("The report builder retained unaudited T661 prose.")
+
+    blocked_builder_report = build_evidence_agent_report(
+        tax_year_audited_graph,
+        assess_evidence_graph(tax_year_audited_graph),
+        draft_payload=draft_payload,
+        evidence_audit=tax_year_audit,
+        grounding_audit=build_grounding_audit_fixture(draft_payload),
+    )
+    if blocked_builder_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("The report builder bypassed a blocked readiness decision.")
+    if blocked_builder_report["t661_lines"]:
+        raise AssertionError("The report builder released prose after a blocked gate.")
+
+    unsupported_draft = json.loads(json.dumps(draft_payload))
+    unsupported_draft["line_246"] += " The final error was 0.2%."
+    unsupported_draft["claim_support"].append({
+        "claim_id": "C246_2",
+        "line_number": "246",
+        "claim_text": "The final error was 0.2%.",
+        "evidence_ids": ["E9"],
+    })
+    try:
+        normalize_grounded_draft(
+            unsupported_draft,
+            source_text,
+            graph,
+            readiness,
+        )
+    except ValueError as exc:
+        if "numeric content" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft with an unsupported numeric fact passed the audit.")
+
+    incomplete_support = json.loads(json.dumps(draft_payload))
+    incomplete_support["draft_support"][1]["evidence_ids"].remove("E7")
+    incomplete_support["claim_support"][4]["evidence_ids"] = ["E8"]
+    try:
+        normalize_grounded_draft(
+            incomplete_support,
+            source_text,
+            graph,
+            readiness,
+        )
+    except ValueError as exc:
+        if "result evidence" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft support map missing result evidence passed the audit.")
+
+    mixed_sequence_graph = json.loads(json.dumps(graph))
+    cloned_ids = {}
+    for source_id, cloned_id in zip(
+        ("E5", "E6", "E7", "E8"),
+        ("E11", "E12", "E13", "E14"),
+    ):
+        clone = json.loads(json.dumps(
+            next(
+                item
+                for item in mixed_sequence_graph["evidence_items"]
+                if item["id"] == source_id
+            )
+        ))
+        clone["id"] = cloned_id
+        mixed_sequence_graph["evidence_items"].append(clone)
+        cloned_ids[source_id] = cloned_id
+    mixed_sequence_graph["investigation_sequences"].append({
+        "id": "SIS2",
+        "stream_id": "TU1",
+        "title": "Second observer investigation",
+        "uncertainty_evidence_ids": ["E4"],
+        "hypothesis_evidence_ids": [cloned_ids["E5"]],
+        "experiment_evidence_ids": [cloned_ids["E6"]],
+        "result_evidence_ids": [cloned_ids["E7"]],
+        "conclusion_evidence_ids": [cloned_ids["E8"]],
+        "advancement_evidence_ids": ["E9"],
+    })
+    mixed_sequence_ids = [
+        "E5",
+        "E12",
+        "E13",
+        "E14",
+        "E10",
+    ]
+    try:
+        validate_line_support(
+            "244",
+            mixed_sequence_ids,
+            {
+                item["id"]: item
+                for item in mixed_sequence_graph["evidence_items"]
+            },
+            mixed_sequence_graph["technical_streams"],
+            mixed_sequence_graph["investigation_sequences"],
+        )
+    except ValueError as exc:
+        if "without citing one complete validated investigation sequence" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft combined partial support from two SIS chains.")
+
+    missing_claim_support = json.loads(json.dumps(draft_payload))
+    missing_claim_support["claim_support"].pop()
+    try:
+        normalize_grounded_draft(
+            missing_claim_support,
+            source_text,
+            graph,
+            readiness,
+        )
+    except ValueError as exc:
+        if "map every sentence exactly once" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A draft with an uncited sentence passed the local audit.")
+
+    outside_line_support = json.loads(json.dumps(draft_payload))
+    outside_line_support["claim_support"][0]["evidence_ids"].append("E5")
+    try:
+        normalize_grounded_draft(
+            outside_line_support,
+            source_text,
+            graph,
+            readiness,
+        )
+    except ValueError as exc:
+        if "outside Line 242's support map" not in str(exc):
+            raise
+    else:
+        raise AssertionError("A claim cited evidence outside its line support map.")
+
+    class FakeUsage:
+        input_tokens = 40
+        output_tokens = 20
+        total_tokens = 60
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.output_text = json.dumps(payload)
+            self.usage = FakeUsage()
+
+    class FakeResponses:
+        def __init__(self, payloads):
+            self.payloads = list(payloads)
+            self.requests = []
+
+        def create(self, **request):
+            self.requests.append(request)
+            return FakeResponse(self.payloads.pop(0))
+
+    class FakeClient:
+        def __init__(self, payloads):
+            self.responses = FakeResponses(payloads)
+
+    evidence_audit = build_evidence_audit_fixture(graph)
+    grounding_audit = build_grounding_audit_fixture(draft_payload)
+    fake_client = FakeClient([
+        raw_graph,
+        evidence_audit,
+        draft_payload,
+        grounding_audit,
+    ])
+    fixture_documents = [
+        {
+            "id": "DOC1",
+            "name": "semantic_fixture.md",
+            "start_char": 0,
+            "end_char": len(source_text),
+            "start_line": 1,
+            "end_line": source_text.count("\n") + 1,
+        }
+    ]
+    context = {
+        "project_source": source_text,
+        "source_documents": fixture_documents,
+        "local_analysis": {"prediction": "borderline"},
+        "local_strategy": {
+            "streams": [],
+            "selected_structure": {"mode": "integrated_narrative"},
+            "rationale": ["The fixture contains one uncertainty stream."],
+        },
+        "t661_evidence_assessment": {
+            "routine_flags": [],
+            "consistency_issues": [],
+        },
+    }
+    end_to_end_report, usage = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=fake_client,
+    )
+    if end_to_end_report["drafting_decision"] != "draft_ready":
+        raise AssertionError("The mocked four-stage agent did not return a grounded draft.")
+    if len(fake_client.responses.requests) != 4:
+        raise AssertionError("The agent did not execute both evidence and drafting audits.")
+    if usage["total_tokens"] != 240:
+        raise AssertionError("Four-stage token usage was not combined.")
+    prompt_keys = [
+        request.get("prompt_cache_key")
+        for request in fake_client.responses.requests
+    ]
+    if prompt_keys != [
+        "sred-evidence-extraction-v1",
+        "sred-evidence-audit-v1",
+        "sred-grounded-drafting-v1",
+        "sred-grounding-audit-v1",
+    ]:
+        raise AssertionError("The semantic agent stages ran in the wrong order.")
+    if "EVIDENCE-DRIVEN STRUCTURE PLAN" not in fake_client.responses.requests[2][
+        "input"
+    ]:
+        raise AssertionError("The drafting stage did not receive the validated structure plan.")
+    if not all(
+        "semantic_fixture.md" in fake_client.responses.requests[index]["input"]
+        for index in (0, 1)
+    ):
+        raise AssertionError("The extraction or evidence audit lost document boundaries.")
+    if end_to_end_report["evidence_graph"]["source_documents"] != fixture_documents:
+        raise AssertionError("The four-stage agent lost source package provenance.")
+    if end_to_end_report["evidence_audit"] != evidence_audit:
+        raise AssertionError("The independent evidence audit was not retained in the report.")
+    if end_to_end_report["grounding_audit"] != grounding_audit:
+        raise AssertionError("The independent grounding audit was not retained in the report.")
+    rendered_agent_report = render_llm_report(
+        end_to_end_report,
+        context,
+        "test-model",
+        usage=usage,
+    )
+    for expected_text in (
+        "## Independent Evidence Audit",
+        "Evidence items reviewed: 10",
+        "Claimed tax year: `supported`",
+        "Investigation sequences reviewed: 1",
+        "**Evidence-driven selection:** `integrated_narrative`",
+        "**Required draft sections:**",
+        "Line 244: Integrated narrative",
+        "## Claim-Level Grounding",
+        "Independent audit: `supported`",
+        "Source location: DOC1 (semantic_fixture.md), line 1, column 1, characters 0-",
+        "## Validated Investigation Sequences",
+        "### SIS1 - TU1 / Observer bandwidth scheduling",
+    ):
+        if expected_text not in rendered_agent_report:
+            raise AssertionError("The rendered report omitted claim-level grounding results.")
+
+    blocked_graph = json.loads(json.dumps(raw_graph))
+    blocked_graph["evidence_items"] = [
+        item
+        for item in blocked_graph["evidence_items"]
+        if item["category"] != "advancement"
+    ]
+    normalized_blocked_graph = normalize_evidence_graph(blocked_graph, source_text)
+    blocked_evidence_audit = build_evidence_audit_fixture(normalized_blocked_graph)
+    blocked_client = FakeClient([blocked_graph, blocked_evidence_audit])
+    blocked_report, blocked_usage = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=blocked_client,
+    )
+    if blocked_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("Incomplete extracted evidence reached the drafting stage.")
+    if len(blocked_client.responses.requests) != 2:
+        raise AssertionError("The agent called the drafting model after a blocked gate.")
+    if blocked_usage["total_tokens"] != 120:
+        raise AssertionError("Blocked extraction usage was not reported correctly.")
+
+    audit_client = FakeClient([raw_graph, evidence_audit, unsupported_draft])
+    audited_report, _ = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=audit_client,
+    )
+    if audited_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("A failed post-draft audit returned T661 prose.")
+    if audited_report["t661_lines"]:
+        raise AssertionError("A failed post-draft audit retained partial T661 prose.")
+    if audited_report["draft_audit"]["status"] != "failed":
+        raise AssertionError("A post-draft grounding failure was not exposed in the report.")
+
+    rejected_audit = build_grounding_audit_fixture(
+        draft_payload,
+        rejected_claim_id="C244_3",
+    )
+    rejected_client = FakeClient([
+        raw_graph,
+        evidence_audit,
+        draft_payload,
+        rejected_audit,
+    ])
+    rejected_report, rejected_usage = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=rejected_client,
+    )
+    if rejected_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("An independently rejected claim did not withhold the draft.")
+    if rejected_report["t661_lines"]:
+        raise AssertionError("An independent audit failure retained T661 prose.")
+    if rejected_report["draft_audit"]["failed_stage"] != "independent_grounding_audit":
+        raise AssertionError("The independent audit failure stage was not exposed.")
+    if len(rejected_client.responses.requests) != 4 or rejected_usage["total_tokens"] != 240:
+        raise AssertionError("Independent audit failure usage was not reported correctly.")
+
+    omitted_audit = build_grounding_audit_fixture(draft_payload)
+    omitted_audit["claims"].pop()
+    omitted_client = FakeClient([
+        raw_graph,
+        evidence_audit,
+        draft_payload,
+        omitted_audit,
+    ])
+    omitted_report, _ = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=omitted_client,
+    )
+    if omitted_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("An audit that omitted a drafted claim released T661 prose.")
+    if "omitted claim IDs" not in omitted_report["draft_audit"]["message"]:
+        raise AssertionError("An omitted grounding-audit claim was not reported clearly.")
+
+    rejected_evidence_audit = build_evidence_audit_fixture(
+        graph,
+        rejected_evidence_id="E9",
+        rejected_dimension="category",
+    )
+    rejected_evidence_client = FakeClient([raw_graph, rejected_evidence_audit])
+    rejected_evidence_report, rejected_evidence_usage = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=rejected_evidence_client,
+    )
+    if rejected_evidence_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("A rejected advancement classification reached drafting.")
+    if rejected_evidence_report["t661_lines"]:
+        raise AssertionError("A rejected evidence classification retained T661 prose.")
+    if rejected_evidence_report["evidence_graph"]["validation"][
+        "semantic_rejected_evidence_ids"
+    ] != ["E9"]:
+        raise AssertionError("The semantic evidence rejection was not retained.")
+    if len(rejected_evidence_client.responses.requests) != 2:
+        raise AssertionError("Drafting ran after the evidence audit removed advancement.")
+    if rejected_evidence_usage["total_tokens"] != 120:
+        raise AssertionError("Evidence rejection usage was not combined.")
+
+    omitted_evidence_audit = build_evidence_audit_fixture(graph)
+    omitted_evidence_audit["item_audits"].pop()
+    omitted_evidence_client = FakeClient([raw_graph, omitted_evidence_audit])
+    omitted_evidence_report, _ = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=omitted_evidence_client,
+    )
+    if omitted_evidence_report["drafting_decision"] != "needs_more_information":
+        raise AssertionError("An incomplete evidence audit reached drafting.")
+    if omitted_evidence_report["t661_lines"]:
+        raise AssertionError("An incomplete evidence audit retained T661 prose.")
+    if omitted_evidence_report["evidence_audit_status"]["status"] != "failed":
+        raise AssertionError("An incomplete evidence audit was not exposed as failed.")
+    if len(omitted_evidence_client.responses.requests) != 2:
+        raise AssertionError("Drafting ran after an incomplete evidence audit.")
+
+    contradiction_audit = build_evidence_audit_fixture(
+        graph,
+        contradictions=[{
+            "evidence_ids": ["E2", "E3"],
+            "description": "The baseline and standard-practice accounts conflict.",
+            "blocks_lines": ["242"],
+        }],
+    )
+    contradiction_client = FakeClient([raw_graph, contradiction_audit])
+    contradiction_report, _ = request_llm_report(
+        context,
+        model="test-model",
+        reasoning_effort="high",
+        client=contradiction_client,
+    )
+    if contradiction_report["section_assessments"][0]["status"] != "needs_more_information":
+        raise AssertionError("An audit-discovered contradiction did not block Line 242.")
+    if len(contradiction_client.responses.requests) != 2:
+        raise AssertionError("Drafting ran after an audit-discovered contradiction.")
+
+    print("\nSemantic evidence agent checks")
+    print("=" * 80)
+    print("PASS: validated exact source quotes and rejected fabricated evidence")
+    print("PASS: derived exact source locations and rejected ambiguous repeated quotes")
+    print("PASS: required a grounded tax year and coherent audited SIS sequences")
+    print("PASS: derived and enforced evidence-driven TU/SIS report structure")
+    print("PASS: rejected unsupported normalized and drafted numeric facts")
+    print("PASS: excluded inferred claims and rejected stream-specific GLOBAL evidence")
+    print("PASS: excluded future work from the claimed-year evidence gate")
+    print("PASS: accepted prior-year starting knowledge but rejected third-party work")
+    print("PASS: blocked material contradictions and asked stream-specific questions")
+    print("PASS: enforced line-level and sentence-level evidence-ID support")
+    print("PASS: independently audited extracted evidence before readiness")
+    print("PASS: rejected mislabeled evidence and incomplete evidence audits")
+    print("PASS: blocked audit-discovered contradictions before drafting")
+    print("PASS: executed mocked extraction, drafting, and both audit stages")
+    print("PASS: rendered claim-level support and independent audit results")
+    print("PASS: withheld prose after blocked, rejected, or omitted evidence checks")
+
+
+def validate_responses_http_client_layer():
+    captured = {}
+    response_payload = {
+        "output": [
+            {
+                "type": "message",
+                "content": [
+                    {"type": "output_text", "text": '{"status":"ok"}'},
+                ],
+            }
+        ],
+        "usage": {
+            "input_tokens": 14,
+            "output_tokens": 6,
+            "total_tokens": 20,
+        },
+    }
+
+    class FakeHTTPResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+        def read(self):
+            return json.dumps(response_payload).encode("utf-8")
+
+    def fake_opener(request, timeout):
+        captured["url"] = request.full_url
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["authorization"] = request.get_header("Authorization")
+        captured["timeout"] = timeout
+        return FakeHTTPResponse()
+
+    client = ResponsesHTTPClient(
+        api_key="test-secret-key",
+        base_url="https://api.openai.com/v1/",
+        timeout_seconds=42,
+        opener=fake_opener,
+    )
+    response = client.responses.create(
+        model="test-model",
+        instructions="Return structured evidence.",
+        input="Project source",
+        store=False,
+        text={
+            "format": {
+                "type": "json_schema",
+                "name": "test_schema",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {"status": {"type": "string"}},
+                    "required": ["status"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+    )
+
+    if captured["url"] != "https://api.openai.com/v1/responses":
+        raise AssertionError("The HTTP fallback used the wrong Responses API URL.")
+    if captured["authorization"] != "Bearer test-secret-key":
+        raise AssertionError("The HTTP fallback omitted bearer authentication.")
+    if captured["timeout"] != 42:
+        raise AssertionError("The HTTP fallback omitted the configured timeout.")
+    if captured["body"]["text"]["format"]["strict"] is not True:
+        raise AssertionError("The HTTP fallback altered the structured-output request.")
+    if response.output_text != '{"status":"ok"}':
+        raise AssertionError("The HTTP fallback did not extract Responses output text.")
+    if response.usage.total_tokens != 20:
+        raise AssertionError("The HTTP fallback did not expose token usage.")
+
+    selected_client = build_responses_client("test-key")
+    if not hasattr(selected_client, "responses"):
+        raise AssertionError("The report agent did not select a Responses-capable client.")
+
+    def error_opener(request, timeout):
+        raise HTTPError(
+            request.full_url,
+            400,
+            "Bad Request",
+            {},
+            BytesIO(b'{"error":{"message":"Invalid schema"}}'),
+        )
+
+    error_client = ResponsesHTTPClient(
+        api_key="do-not-leak-this-key",
+        opener=error_opener,
+    )
+    try:
+        error_client.responses.create(model="test-model", input="source")
+    except RuntimeError as exc:
+        error_message = str(exc)
+        if "HTTP 400: Invalid schema" not in error_message:
+            raise AssertionError("The HTTP fallback hid the API error detail.")
+        if "do-not-leak-this-key" in error_message:
+            raise AssertionError("The HTTP fallback exposed the API key in an error.")
+    else:
+        raise AssertionError("The HTTP fallback did not raise an API error.")
+
+    print("\nResponses HTTP fallback checks")
+    print("=" * 80)
+    print("PASS: serialized strict Responses API requests without the OpenAI SDK")
+    print("PASS: parsed output text and token usage")
+    print("PASS: selected a Responses-capable transport without a required SDK")
+    print("PASS: returned useful API errors without exposing the API key")
+
+
 def validate_incomplete_intake_capability(model):
     source_path = BASE_DIR / "examples" / "incomplete_sem_client_draft.md"
     expected_path = BASE_DIR / "examples" / "incomplete_sem_expected_gaps.json"
@@ -892,8 +2515,8 @@ def validate_incomplete_intake_capability(model):
     if t661:
         raise AssertionError("Incomplete intake produced a partial T661 report.")
 
-    if set(evidence_assessment["blocked_lines"]) != {"242", "244", "246"}:
-        raise AssertionError("Incomplete intake did not block all incomplete T661 lines.")
+    if "244" not in evidence_assessment["blocked_lines"]:
+        raise AssertionError("Incomplete intake did not block Line 244 evidence gaps.")
 
     line_244_questions = " ".join(
         question
@@ -956,7 +2579,7 @@ def validate_incomplete_intake_capability(model):
     )
     print("PASS: selected and preserved TU1/TU2/TU3 structure")
     print("PASS: generated grounded stream-specific follow-up questions")
-    print("PASS: blocked Lines 242, 244, and 246 when evidence was incomplete")
+    print("PASS: blocked all T661 drafting when a required line remained incomplete")
     print("PASS: generated no partial T661 report")
     print("PASS: assessed incomplete unstructured client narratives")
 
@@ -990,6 +2613,489 @@ def validate_t661_capability_benchmarks(model):
         )
 
     print(f"PASS: combined T661 benchmark ({total_passed}/{total_cases})")
+
+
+def validate_semantic_evidence_benchmark():
+    benchmark_data = json.loads(
+        SEMANTIC_EVIDENCE_BENCHMARK_PATH.read_text(encoding="utf-8")
+    )
+    result = run_semantic_evidence_benchmark(benchmark_data)
+    if result["passed"] != result["total"]:
+        failures = [
+            f"{case['id']}: {'; '.join(case['failures'])}"
+            for case in result["results"]
+            if not case["passed"]
+        ]
+        raise AssertionError(
+            f"{SEMANTIC_EVIDENCE_BENCHMARK_PATH.name} failed:\n"
+            + "\n".join(failures)
+        )
+
+    print("\nSemantic evidence gate benchmark checks")
+    print("=" * 80)
+    print(
+        f"PASS: {SEMANTIC_EVIDENCE_BENCHMARK_PATH.name} "
+        f"({result['passed']}/{result['total']})"
+    )
+
+
+def validate_live_agent_benchmark_layer(model):
+    benchmark_data = json.loads(
+        LIVE_AGENT_BENCHMARK_PATH.read_text(encoding="utf-8")
+    )
+    validate_live_benchmark_data(benchmark_data)
+    cases = benchmark_data["cases"]
+    case_ids = {case["id"] for case in cases}
+    required_case_ids = {
+        "complete_single_stream",
+        "incomplete_results_and_advancement",
+        "future_work_only",
+        "routine_vendor_configuration",
+        "prior_year_investigation_only",
+        "contradictory_work_attribution",
+        "complete_two_stream_project",
+        "prompt_injection_in_incomplete_source",
+        "failed_but_complete_investigation",
+        "systematic_analysis_without_prototype",
+        "missing_claimed_tax_year",
+        "conflicting_claimed_year_chronology",
+        "commercial_ab_test_only",
+        "one_uncertainty_two_investigations",
+        "two_streams_with_incomplete_chains",
+        "qualitative_complete_investigation",
+    }
+    if case_ids != required_case_ids:
+        raise AssertionError("The live benchmark lost one or more required blind cases.")
+    smoke_cases = live_agent_benchmark.select_benchmark_cases(
+        benchmark_data,
+        suite="smoke",
+    )
+    full_cases = live_agent_benchmark.select_benchmark_cases(
+        benchmark_data,
+        suite="full",
+    )
+    selected_extended_case = live_agent_benchmark.select_benchmark_cases(
+        benchmark_data,
+        selected_case_ids=["qualitative_complete_investigation"],
+        suite="smoke",
+    )
+    if len(smoke_cases) != 8 or len(full_cases) != 16:
+        raise AssertionError("The live benchmark suite tiers selected the wrong cases.")
+    if [case["id"] for case in selected_extended_case] != [
+        "qualitative_complete_investigation"
+    ]:
+        raise AssertionError("Explicit case selection did not override the smoke tier.")
+
+    for case in cases:
+        source_text, source_documents = live_agent_benchmark.case_source_package(case)
+        context = build_local_context(
+            source_text,
+            classifier=model,
+            source_documents=source_documents,
+        )
+        if context.get("project_source") != source_text:
+            raise AssertionError(f"Live case {case['id']} changed its source text.")
+        if context.get("source_documents") != source_documents:
+            raise AssertionError(f"Live case {case['id']} lost its source manifest.")
+        if case["id"] == "contradictory_work_attribution" and len(
+            source_documents
+        ) != 3:
+            raise AssertionError("The live cross-document conflict lost its package.")
+
+    def clone_benchmark():
+        return json.loads(json.dumps(benchmark_data))
+
+    def expect_invalid(data, expected_message):
+        try:
+            validate_live_benchmark_data(data)
+        except ValueError as exc:
+            if expected_message not in str(exc):
+                raise AssertionError(
+                    f"Unexpected live fixture validation error: {exc}"
+                ) from exc
+        else:
+            raise AssertionError(
+                f"Invalid live fixture was accepted; expected {expected_message!r}."
+            )
+
+    invalid = clone_benchmark()
+    invalid["cases"].append(invalid["cases"][0])
+    expect_invalid(invalid, "Duplicate live benchmark case ID")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["smoke"] = "yes"
+    expect_invalid(invalid, "field smoke must be boolean")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["documents"] = [
+        {"name": "extra.txt", "text": "Unexpected second source form."}
+    ]
+    expect_invalid(invalid, "requires exactly one of text or documents")
+
+    invalid = clone_benchmark()
+    document_case = next(
+        case
+        for case in invalid["cases"]
+        if case["id"] == "contradictory_work_attribution"
+    )
+    document_case["documents"][1]["name"] = document_case["documents"][0]["name"]
+    expect_invalid(invalid, "duplicate source document names")
+
+    invalid = clone_benchmark()
+    for case in invalid["cases"]:
+        case["smoke"] = False
+    expect_invalid(invalid, "requires at least one smoke case")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["expected"]["blocked_lines_include"] = ["999"]
+    expect_invalid(invalid, "invalid T661 lines")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["expected"]["blocked_lines_include"] = ["242"]
+    expect_invalid(invalid, "requires and excludes the same blocked lines")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["expected"]["minimum_streams"] = 2
+    invalid["cases"][0]["expected"]["maximum_streams"] = 1
+    expect_invalid(invalid, "minimum_streams exceeds maximum_streams")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["expected"]["minimum_streams"] = True
+    expect_invalid(invalid, "minimum_streams must be non-negative")
+
+    invalid = clone_benchmark()
+    invalid["cases"][0]["expected"][
+        "forbidden_claimed_year_evidence_categories"
+    ] = ["uncertainty"]
+    expect_invalid(invalid, "both requires and forbids claimed-year categories")
+
+    invalid = clone_benchmark()
+    invalid["cases"][1]["expected"]["required_question_term_groups"] = [[]]
+    expect_invalid(invalid, "required_question_term_groups")
+
+    try:
+        live_agent_benchmark.select_benchmark_cases(
+            benchmark_data,
+            selected_case_ids=["missing_case"],
+        )
+    except ValueError as exc:
+        if "Unknown live benchmark case IDs" not in str(exc):
+            raise AssertionError(f"Unexpected case selection error: {exc}") from exc
+    else:
+        raise AssertionError("The live benchmark accepted an unknown case ID.")
+
+    def canonical_report(case):
+        expected = case["expected"]
+        claimed_categories = set(
+            expected.get("required_claimed_year_evidence_categories", [])
+        )
+        categories = sorted(
+            claimed_categories
+            | set(expected.get("required_evidence_categories", []))
+        )
+        evidence_items = [
+            {
+                "id": f"E{index}",
+                "category": category,
+                "tax_year_scope": (
+                    "claimed_year" if category in claimed_categories else "unspecified"
+                ),
+            }
+            for index, category in enumerate(categories, start=1)
+        ]
+        stream_count = expected.get("minimum_streams", 0)
+        sequence_count = expected.get("minimum_sequences", 0)
+        conflict_count = max(
+            expected.get("minimum_contradictions", 0),
+            expected.get("minimum_material_conflicts", 0),
+        )
+        question_texts = [
+            f"Please provide {group[0]}."
+            for group in expected.get("required_question_term_groups", [])
+        ]
+        while len(question_texts) < expected.get("minimum_follow_up_questions", 0):
+            question_texts.append("Please provide the missing technical evidence.")
+
+        decision = expected["drafting_decision"]
+        draft_ready = decision == "draft_ready"
+        line_text = {
+            line: f"Grounded fixture prose for Line {line}." for line in ("242", "244", "246")
+        }
+        line_objects = {
+            line: {
+                "draft": line_text[line],
+                "word_count": word_count(line_text[line]),
+                "word_limit": T661_LINE_WORD_LIMITS[line],
+                "warnings": [],
+            }
+            for line in ("242", "244", "246")
+        }
+        blocked_lines = set(expected.get("blocked_lines_include", []))
+        report = {
+            "drafting_decision": decision,
+            "section_assessments": [
+                {
+                    "line_number": line,
+                    "status": "missing_evidence" if line in blocked_lines else "ready",
+                }
+                for line in ("242", "244", "246")
+            ],
+            "evidence_graph": {
+                "claimed_tax_year": expected["claimed_tax_year"],
+                "technical_streams": [
+                    {"id": f"stream_{index}"}
+                    for index in range(1, stream_count + 1)
+                ],
+                "investigation_sequences": [
+                    {"id": f"sequence_{index}"}
+                    for index in range(1, sequence_count + 1)
+                ],
+                "evidence_items": evidence_items,
+                "contradictions": [
+                    {"id": f"conflict_{index}"}
+                    for index in range(1, conflict_count + 1)
+                ],
+                "attribution_issues": [],
+                "validation": {"accepted_evidence_items": len(evidence_items)},
+            },
+            "structure_mode": expected["structure_mode_one_of"][0],
+            "eligibility_signal": expected["eligibility_signal_one_of"][0],
+            "follow_up_questions": [
+                {"question": question} for question in question_texts
+            ],
+            "t661_lines": line_objects if draft_ready else {},
+            "line_242": line_text["242"] if draft_ready else "",
+            "line_244": line_text["244"] if draft_ready else "",
+            "line_246": line_text["246"] if draft_ready else "",
+            "claim_support": (
+                [
+                    {
+                        "claim_id": f"C{line}",
+                        "line_number": line,
+                        "claim_text": line_text[line],
+                        "evidence_ids": ["E1"],
+                    }
+                    for line in ("242", "244", "246")
+                ]
+                if draft_ready
+                else []
+            ),
+            "agent_stages": [
+                {"stage": stage, "status": "passed"}
+                for stage in (
+                    "independent_evidence_audit",
+                    "readiness_gate",
+                    "grounded_drafting",
+                    "post_draft_local_audit",
+                    "independent_grounding_audit",
+                )
+            ],
+        }
+        return report
+
+    reports = {case["id"]: canonical_report(case) for case in cases}
+    case_by_id = {case["id"]: case for case in cases}
+    for case in cases:
+        evaluation = evaluate_live_agent_report(case, reports[case["id"]])
+        if not evaluation["passed"]:
+            raise AssertionError(
+                f"Canonical live result failed for {case['id']}: "
+                + "; ".join(evaluation["failures"])
+            )
+
+    safety_metrics = live_agent_benchmark.summarize_safety_metrics([
+        {
+            "id": "false_ready_fixture",
+            "expected_decision": "needs_more_information",
+            "passed": False,
+            "observed": {
+                "drafting_decision": "draft_ready",
+                "draft_artifacts_present": True,
+            },
+        },
+        {
+            "id": "false_block_fixture",
+            "expected_decision": "draft_ready",
+            "passed": False,
+            "observed": {
+                "drafting_decision": "needs_more_information",
+                "draft_artifacts_present": False,
+            },
+        },
+    ])
+    if (
+        safety_metrics["false_ready_cases"] != 1
+        or safety_metrics["false_block_cases"] != 1
+        or safety_metrics["failed_safety_controls"] != 1
+        or safety_metrics["failed_quality_controls"] != 1
+    ):
+        raise AssertionError("The live benchmark safety metrics hid a failure mode.")
+
+    ready_case = case_by_id["complete_single_stream"]
+    wrong_year_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    wrong_year_report["evidence_graph"]["claimed_tax_year"] = "2024"
+    if evaluate_live_agent_report(ready_case, wrong_year_report)["passed"]:
+        raise AssertionError("The live scorer accepted the wrong claimed tax year.")
+
+    missing_section_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    missing_section_report["section_assessments"].pop()
+    if evaluate_live_agent_report(ready_case, missing_section_report)["passed"]:
+        raise AssertionError("The live scorer accepted a missing line assessment.")
+
+    missing_support_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    missing_support_report["claim_support"] = missing_support_report[
+        "claim_support"
+    ][:1]
+    if evaluate_live_agent_report(ready_case, missing_support_report)["passed"]:
+        raise AssertionError("The live scorer accepted incomplete claim-level support.")
+
+    inconsistent_lines_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    inconsistent_lines_report["t661_lines"]["244"]["draft"] = "Different prose."
+    if evaluate_live_agent_report(ready_case, inconsistent_lines_report)["passed"]:
+        raise AssertionError("The live scorer accepted inconsistent T661 line fields.")
+
+    failed_stage_report = json.loads(json.dumps(reports[ready_case["id"]]))
+    failed_stage_report["agent_stages"][-1]["status"] = "failed"
+    if evaluate_live_agent_report(ready_case, failed_stage_report)["passed"]:
+        raise AssertionError("The live scorer accepted a failed grounding audit.")
+
+    future_case = case_by_id["future_work_only"]
+    hallucinated_report = json.loads(json.dumps(reports[future_case["id"]]))
+    hallucinated_report["evidence_graph"]["evidence_items"].append({
+        "id": "invented_result",
+        "category": "result",
+        "tax_year_scope": "claimed_year",
+    })
+    if evaluate_live_agent_report(future_case, hallucinated_report)["passed"]:
+        raise AssertionError("The live scorer accepted future work as a claimed-year result.")
+
+    incomplete_case = case_by_id["incomplete_results_and_advancement"]
+    vague_questions_report = json.loads(json.dumps(reports[incomplete_case["id"]]))
+    vague_questions_report["follow_up_questions"] = [
+        {"question": "Can you provide more information?"},
+        {"question": "Is anything else available?"},
+    ]
+    if evaluate_live_agent_report(incomplete_case, vague_questions_report)["passed"]:
+        raise AssertionError("The live scorer accepted vague follow-up questions.")
+
+    blocked_report = json.loads(
+        json.dumps(reports["prompt_injection_in_incomplete_source"])
+    )
+    blocked_report["line_242"] = "Unsupported partial prose."
+    if evaluate_live_agent_report(
+        case_by_id["prompt_injection_in_incomplete_source"],
+        blocked_report,
+    )["passed"]:
+        raise AssertionError("The live scorer accepted prose in a blocked report.")
+
+    artifact_case = case_by_id["prompt_injection_in_incomplete_source"]
+    artifact_report = json.loads(json.dumps(reports[artifact_case["id"]]))
+    artifact_report.update({
+        "confidence": "low",
+        "overall_assessment": "The source is incomplete, so drafting is withheld.",
+        "structure_rationale": "One incomplete technical stream was identified.",
+        "structure_plan": {},
+        "technical_streams": [],
+        "factual_risks": [],
+        "review_notes": ["Human review remains required."],
+    })
+    for section in artifact_report["section_assessments"]:
+        section["supported_information"] = []
+        section["missing_information"] = ["Grounded technical evidence is missing."]
+    for question in artifact_report["follow_up_questions"]:
+        question["why_it_matters"] = "The readiness gate requires this evidence."
+        question["examples_to_check"] = ["Dated technical record"]
+    artifact_report["evidence_graph"]["validation"].update({
+        "rejected_evidence_items": 0,
+        "accepted_investigation_sequences": 0,
+        "rejected_investigation_sequences": 0,
+        "accepted_extracted_issues": 0,
+        "rejected_extracted_issues": 0,
+    })
+
+    original_request = live_agent_benchmark.request_llm_report
+    try:
+        live_agent_benchmark.request_llm_report = (
+            lambda context, model, reasoning_effort, client: (
+                artifact_report,
+                {"input_tokens": 11, "output_tokens": 7, "total_tokens": 18},
+            )
+        )
+        with TemporaryDirectory() as temp_dir:
+            result = live_agent_benchmark.run_live_benchmark(
+                benchmark_data,
+                model="offline-fixture-model",
+                reasoning_effort="high",
+                client=object(),
+                classifier=model,
+                output_dir=temp_dir,
+                selected_case_ids=[artifact_case["id"]],
+            )
+            output_dir = Path(temp_dir)
+            expected_files = {
+                f"{artifact_case['id']}.md",
+                f"{artifact_case['id']}.json",
+                "summary.md",
+                "summary.json",
+            }
+            if {path.name for path in output_dir.iterdir()} != expected_files:
+                raise AssertionError("The live runner did not save its complete artifact set.")
+            if result["passed"] != 1 or result["usage"]["total_tokens"] != 18:
+                raise AssertionError("The live runner lost its score or token totals.")
+            if (
+                result["suite"] != "selected"
+                or result["safety_metrics"]["false_ready_cases"] != 0
+                or result["safety_metrics"]["failed_safety_controls"] != 0
+            ):
+                raise AssertionError("The live runner reported incorrect safety metrics.")
+            saved_summary = json.loads(
+                (output_dir / "summary.json").read_text(encoding="utf-8")
+            )
+            if saved_summary["passed"] != 1 or saved_summary["total"] != 1:
+                raise AssertionError("The saved live summary does not match the run.")
+            report_text = (output_dir / f"{artifact_case['id']}.md").read_text(
+                encoding="utf-8"
+            )
+            if "Draft not generated" not in report_text:
+                raise AssertionError("The saved live report omitted its withholding decision.")
+
+        def raise_fixture_error(context, model, reasoning_effort, client):
+            raise RuntimeError("Synthetic API failure.")
+
+        live_agent_benchmark.request_llm_report = raise_fixture_error
+        with TemporaryDirectory() as temp_dir:
+            result = live_agent_benchmark.run_live_benchmark(
+                benchmark_data,
+                model="offline-fixture-model",
+                reasoning_effort="high",
+                client=object(),
+                classifier=model,
+                output_dir=temp_dir,
+                selected_case_ids=[artifact_case["id"]],
+            )
+            output_dir = Path(temp_dir)
+            error_payload = json.loads(
+                (output_dir / f"{artifact_case['id']}.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            if result["passed"] != 0 or error_payload.get("error", {}).get(
+                "type"
+            ) != "RuntimeError":
+                raise AssertionError("The live runner did not preserve a case failure.")
+            if result["safety_metrics"]["failed_safety_controls"] != 1:
+                raise AssertionError("The live runner hid a failed blocked-case control.")
+            if not (output_dir / f"{artifact_case['id']}.md").is_file():
+                raise AssertionError("The live runner omitted its failure report artifact.")
+    finally:
+        live_agent_benchmark.request_llm_report = original_request
+
+    print("\nLive semantic agent benchmark checks")
+    print("=" * 80)
+    print(f"PASS: validated {len(cases)} live benchmark contracts")
+    print("PASS: prepared every live case locally without an API request")
+    print("PASS: rejected invalid fixtures and false-positive agent outputs")
+    print("PASS: saved complete benchmark artifacts and token totals")
 
 
 training_df = validate_training_csv()
@@ -1083,5 +3189,10 @@ validate_technical_report_layer(model)
 validate_t661_questionnaire_drafting(model)
 validate_report_strategy_layer(model)
 validate_llm_report_agent_layer()
+validate_source_package_layer(model)
+validate_semantic_evidence_agent_layer()
+validate_responses_http_client_layer()
 validate_incomplete_intake_capability(model)
 validate_t661_capability_benchmarks(model)
+validate_semantic_evidence_benchmark()
+validate_live_agent_benchmark_layer(model)

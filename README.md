@@ -31,6 +31,9 @@ data/
   test_examples.csv
 benchmarks/
   BENCHMARK_FINDINGS.md
+  live_agent_benchmark.json
+  semantic_evidence_gate_benchmark.json
+  t661_adversarial_benchmark.json
   t661_capability_benchmark.json
   t661_holdout_benchmark.json
 src/
@@ -39,12 +42,18 @@ src/
   analysis_engine.py
   case_store.py
   case_manager.py
+  evidence_agent.py
+  grounding.py
+  responses_http_client.py
   technical_report.py
   train_sred_classifier.py
   run_tests.py
   intake_agent.py
   llm_report_agent.py
+  source_package.py
   run_capability_benchmark.py
+  run_live_agent_benchmark.py
+  run_semantic_evidence_benchmark.py
   predict_sred.py
   cra_guideline_checker.py
   cra_reference.py
@@ -136,18 +145,82 @@ Before drafting the T661 lines, the agent adds a drafting strategy and rationale
 
 When the agent decides that splitting is clearer, the T661 draft itself is sectioned with labels such as `TU1`, `TU2`, `SIS1`, and `SIS2` inside lines 242, 244, and 246 so the submitted technical narrative can separate overlapping uncertainties and investigations.
 
-## Run A Local AI Capability Test
+## Run The Evidence-First Report Agent
 
-The optional LLM report agent combines the existing local classifier, CRA checks,
-evidence mapping, and strategy planner with an OpenAI reasoning pass. It runs from
-your Mac and saves an editable Markdown report; no website or hosting is required.
+The optional OpenAI path is the main semantic report agent. It combines the local
+classifier and deterministic safeguards with four separate model stages when the
+evidence is complete:
 
-Install the updated requirements and pass a UTF-8 text or Markdown project description:
+1. Evidence extraction creates typed technical streams and exact source-quote-backed
+   evidence items. Each item records certainty, claimed/prior/future timing, and whether
+   the work belongs to the claimant, a claimant-directed contractor, or a third party.
+   Local code derives line, column, and character locations and rejects repeated quotes
+   whose occurrence cannot be identified unambiguously. It also extracts explicit SIS
+   chains linking uncertainty, hypothesis, performed work, result, conclusion, and
+   advancement.
+2. An independent evidence-audit call checks the claimed tax year, every extracted
+   item's normalized fact, category, certainty, tax-year scope, attribution, and stream
+   assignment, every SIS relationship and chronology, and every extracted routine-work
+   or attribution blocker. Unsupported or ambiguous years, items, sequences, or blockers
+   are removed, and newly detected contradictions block affected lines.
+3. A local readiness gate checks every stream against the evidence needed for Lines
+   242, 244, and 246. It requires a uniquely grounded four-digit claimed tax year and a
+   coherent audited SIS chain for Lines 244 and 246. It blocks contradictory, future,
+   unattributed, routine, disconnected, or incomplete evidence and generates targeted
+   questions instead of a partial report.
+4. A deterministic structure planner selects integrated, split-stream, or hybrid
+   presentation from the validated TU/SIS topology. Multi-stream and multi-sequence
+   plans define required line-specific TU/SIS labels and ordering.
+5. Grounded drafting runs only after every line passes. The model must follow the
+   structure plan and cite evidence
+   IDs for each line and for every sentence or standalone factual statement.
+6. A local post-draft audit rejects the wrong structure mode, missing or reordered
+   TU/SIS sections, empty headings, claims placed under the wrong TU/SIS label,
+   cross-sequence evidence mixing, missing sentence maps, unknown or out-of-scope
+   evidence IDs, missing category support, over-limit prose, and numeric facts not
+   present in the client source.
+7. An independent grounding call checks every drafted claim against exactly its cited
+   evidence. Any ambiguous, unsupported, omitted, or incompletely reviewed claim causes
+   all T661 prose to be withheld.
+
+The command runs from your Mac and saves an editable Markdown report containing the
+evidence ledger, readiness decision, TU/SIS structure rationale, questions or draft,
+the support IDs used for each drafted line and claim, and the independent audit result.
+No website or hosting is required.
+
+Install the updated requirements and pass one or more UTF-8 evidence files:
 
 ```bash
 venv/bin/python -m pip install -r requirements.txt
 venv/bin/python src/llm_report_agent.py /path/to/project.txt --show
 ```
+
+For a package containing a questionnaire, engineering notes, and test summary, preserve
+the intended document order on the command line:
+
+```bash
+venv/bin/python src/llm_report_agent.py \
+  /path/to/questionnaire.md \
+  /path/to/engineering_notes.txt \
+  /path/to/test_summary.txt \
+  --show
+```
+
+The package layer assigns stable IDs such as `DOC1` and `DOC2` and keeps filenames out
+of the evidence text, so a date or technical term in a filename cannot support a claim.
+The model sees explicit document boundaries, while local code independently maps every
+accepted quote back to its filename and document-local line, column, and character
+range. Quotes that cross a file boundary are rejected. An identical short quote found
+in multiple files remains ambiguous unless the selected contiguous passage is unique.
+Reports list the source manifest and document-aware locations without exposing absolute
+local paths.
+
+The agent uses the official OpenAI Responses API. When the optional `openai` Python
+package is installed it uses that SDK; otherwise it automatically uses the included
+standard-library HTTPS client, so no additional package is required for model calls.
+Both transports send the same strict Structured Outputs request. See the official
+[Responses API reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
+and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
 
 If `OPENAI_API_KEY` is not already set, the command asks for the key securely. Terminal
 does not display characters while you paste or type the key; press Return when finished.
@@ -166,6 +239,13 @@ The default model is `gpt-5.6-terra`. Override it for a comparison without chang
 OPENAI_MODEL="gpt-5.6-sol" venv/bin/python src/llm_report_agent.py /path/to/project.txt --show
 ```
 
+Reasoning effort defaults to `high` and can be changed for a cost/quality comparison:
+
+```bash
+venv/bin/python src/llm_report_agent.py /path/to/project.txt \
+  --reasoning-effort medium --show
+```
+
 To confirm that the local classifier and report preparation work without making a paid
 API request:
 
@@ -173,9 +253,12 @@ API request:
 venv/bin/python src/llm_report_agent.py /path/to/project.txt --dry-run
 ```
 
-The AI output is constrained to structured fields, checked against the official T661
-word limits, scanned for measurements that do not appear in the supplied source, and
-clearly marked as a draft requiring human verification.
+The model calls use strict structured outputs. Source text is treated as untrusted
+client evidence, so instructions embedded inside it do not override the agent. Exact
+quote validation and numeric grounding are deterministic local checks. Independent
+audits check both evidence classification and final claim support. These controls reduce
+unsupported drafting; they cannot verify whether the client's statement or record is
+true. Human technical and tax review is mandatory.
 
 ## Test An Incomplete Client Intake
 
@@ -198,21 +281,88 @@ request.
 
 ## Run The T661 Capability Benchmarks
 
-The repository includes two offline benchmark sets covering complete, incomplete,
-routine, contradictory, negated, qualitative, multi-stream, unstructured, and
-prompt-injection cases:
+The repository includes three offline benchmark sets covering complete, incomplete,
+routine, contradictory, negated, qualitative, multi-stream, unstructured,
+prompt-injection, failed-project, future-work, attribution, tax-year, recollection,
+and analysis-without-physical-prototype cases:
 
 ```bash
 venv/bin/python src/run_capability_benchmark.py
 venv/bin/python src/run_capability_benchmark.py \
   benchmarks/t661_holdout_benchmark.json
+venv/bin/python src/run_capability_benchmark.py \
+  benchmarks/t661_adversarial_benchmark.json
 ```
 
-The normal test runner executes both sets as regression checks. The cases test the
+The normal test runner executes all three sets as regression checks. The cases test the
 local sklearn classifier, evidence gate, stream planner, and deterministic drafting
 controls. They do not call an OpenAI model and do not establish legal eligibility.
 See `benchmarks/BENCHMARK_FINDINGS.md` for the baseline failures, fixes, current
 results, and limits of the evaluation.
+
+The semantic evidence layer has a separate 16-case benchmark for claimed-year grounding,
+SIS linkage, chronology, attribution, future work, contradictions, and evidence-driven
+integrated, split-stream, and hybrid structure selection:
+
+```bash
+venv/bin/python src/run_semantic_evidence_benchmark.py
+```
+
+This benchmark exercises the deterministic validation and independent-audit application
+layer with controlled evidence graphs. It does not score a live model's extraction
+quality.
+
+## Run The Live Semantic Agent Benchmark
+
+The live benchmark contains 16 synthetic blind cases for the complete model-backed
+agent. The default eight-case smoke suite covers a complete single investigation,
+missing results and advancement, future-only work, routine vendor configuration,
+prior-year-only investigation, cross-document contradictory work attribution, a
+complete two-stream project, and an instruction embedded in untrusted client text. The
+full suite adds an
+unsuccessful but complete investigation, analysis without a physical prototype, a
+missing claim year, contradictory chronology, commercial A/B testing, two SIS paths
+for one TU, incomplete chains across two streams, and a complete qualitative result.
+
+Validate the fixture contract and run all local preparation without an API request:
+
+```bash
+venv/bin/python src/run_live_agent_benchmark.py --dry-run
+```
+
+Run one inexpensive diagnostic case before the full set:
+
+```bash
+venv/bin/python src/run_live_agent_benchmark.py \
+  --case incomplete_results_and_advancement
+```
+
+Run the eight smoke cases after setting `OPENAI_API_KEY`:
+
+```bash
+venv/bin/python src/run_live_agent_benchmark.py
+```
+
+Run all 16 cases for a wider release-candidate evaluation:
+
+```bash
+venv/bin/python src/run_live_agent_benchmark.py --suite full
+```
+
+Each real run saves the rendered report and raw structured JSON for every case plus
+machine-readable and Markdown summaries under a timestamped `benchmark_results/`
+directory. The scorer checks the claimed tax year, accepted and prohibited claimed-year
+evidence, TU stream and SIS sequence counts, contradictions, attribution conflicts,
+drafting decision, blocked lines, structure mode, question concepts, complete claim
+support, and every mandatory audit stage. The summary reports false-ready, false-block,
+failed blocked-case controls, and failed ready-case controls separately so aggregate
+accuracy cannot hide a dangerous drafting failure. It fails the process if any case
+fails unless `--no-fail-exit` is supplied.
+
+The full benchmark can make up to four model calls for each complete case and two for
+each blocked case. It therefore has nonzero API cost and latency. Use `--case` while
+iterating, preserve failed artifacts for diagnosis, and compare model or reasoning
+settings explicitly rather than treating a single score as production accuracy.
 
 ## Add CRA-Grounded Training Examples
 
@@ -238,7 +388,12 @@ Case manager checks: PASS
 Technical report generator checks: PASS
 T661 project description checks: PASS
 Report strategy planner checks: PASS
-T661 capability benchmark: 18/18
+Semantic evidence-agent checks: PASS
+Multi-document source package checks: PASS
+T661 capability benchmark: 29/29
+Semantic evidence and structure benchmark: 16/16
+Live benchmark contract and false-positive scorer checks: PASS (16 cases; 8 smoke)
+Live model benchmark: NOT RUN (API key required)
 Incomplete intake gaps detected: 10/10
 Incomplete intake T661 drafts generated: 0
 Complete questionnaire T661 drafting: PASS
@@ -250,13 +405,22 @@ sets. They are regression signals, not estimates of production accuracy. Real,
 independently labelled project records and analyst review are still required before
 treating the analyzer as reliable.
 
-## Next Improvements
+## Known Limits And Next Validation
 
-- add more challenging `borderline` and `needs_more_info` tests
-- separate data validation into a reusable module or test file
-- add analyst-facing examples and confidence interpretation
-- add case export formats for analyst handoff
-- improve T661 line 242/244/246 wording through real case testing
-- improve report strategy planning with more domains and examples
+- The semantic path requires an OpenAI API key. It makes extraction and independent
+  evidence-audit calls for every case; when the evidence gate passes it also makes a
+  drafting call and an independent claim-grounding call. This increases cost and latency
+  in exchange for stricter evidence- and claim-level support.
+- Offline benchmarks are synthetic regression tests, not production accuracy or an
+  eligibility opinion.
+- Exact quotes prove only that a statement appeared in the supplied source. They do
+  not authenticate records, dates, measurements, authorship, or client claims.
+- Multi-document input currently accepts plain UTF-8 files. PDF, Word, spreadsheet,
+  image, OCR, and table extraction require a separate ingestion layer before their
+  contents can enter the grounded source package.
+- The next meaningful evaluation is a blinded set of de-identified real projects,
+  independently reviewed by experienced SR&ED practitioners. Measure false-ready
+  rate, false-block rate, unsupported-fact rate, stream quality, question usefulness,
+  and reviewer agreement before packaging this as a client-facing product.
 - consider a small Streamlit interface for guided review
 - document model limitations and human review requirements

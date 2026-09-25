@@ -44,6 +44,19 @@ def evaluate_case(case, classifier):
             f"observed {len(streams)}"
         )
 
+    maximum_streams = expected.get("maximum_streams")
+    if maximum_streams is not None and len(streams) > maximum_streams:
+        failures.append(
+            f"stream count: expected at most {maximum_streams}, observed {len(streams)}"
+        )
+
+    normalized_titles = " ".join(stream["title"].lower() for stream in streams)
+    for excluded_title in expected.get("stream_title_excludes", []):
+        if excluded_title.lower() in normalized_titles:
+            failures.append(
+                f"unexpected stream title content: {excluded_title}"
+            )
+
     generic_stream = any(
         stream["title"] == "Primary technological uncertainty"
         for stream in streams

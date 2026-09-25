@@ -1,0 +1,242 @@
+{
+  "name": "SR&ED T661 Adversarial Evidence Benchmark",
+  "cases": [
+    {
+      "id": "failed_project_with_advancement_attempt",
+      "category": "attempted_advancement",
+      "description": "A project can support Lines 242/244/246 even when no approach achieved the target.",
+      "text": [
+        "## Objective\nThe team attempted to keep seal leakage below 2 ml/minute through 400 thermal cycles.",
+        "## Starting knowledge\nThe available elastomer design leaked at 11 ml/minute after 120 cycles. Supplier compression tables described constant-temperature service and could not predict stress relaxation under the required cycling profile.",
+        "## Technological uncertainty\nThe team did not know whether a graded seal geometry could preserve contact pressure through repeated expansion and contraction.",
+        "## Hypothesis and analysis\nThe hypothesis was that a graded lip would redistribute contact stress. Engineers analysed four lip profiles and manufactured three prototypes.",
+        "## Work and results\nProfile A cracked after 90 cycles. Profile B reached 260 cycles before leakage rose to 5 ml/minute. Profile C completed 400 cycles but leaked at 3.4 ml/minute, so it was rejected. The team stopped that path after the stress maps and fracture images showed that the required contact pressure and fatigue life remained incompatible in the tested material.",
+        "## Records\nDated CAD revisions, finite-element runs, pressure traces, cycle logs, fracture images, and decision notes record the work.",
+        "## Advancement attempted\nThe work established that redistributing static contact pressure did not prevent cyclic stress concentration at the graded-lip transition. This narrowed the feasible geometry and showed that a material-property change, rather than further lip refinement, was required."
+      ],
+      "expected": {
+        "can_draft": true,
+        "blocked_lines_include": [],
+        "ready_lines_include": ["242", "244", "246"],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "stream_title_excludes": ["Thermal drift", "Software performance"],
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "complete_single_path_analysis",
+      "category": "single_systematic_path",
+      "description": "Systematic analysis with one evolving hypothesis must not require unrelated alternatives or an abandoned path.",
+      "text": [
+        "## Objective\nThe technical objective was to determine whether the heat exchanger could avoid local boiling while transferring the required heat load.",
+        "## Existing knowledge\nPublished correlations assumed uniform inlet flow. The existing exchanger developed vapour pockets because the compact manifold produced a non-uniform velocity field, and standard calculations could not determine the local wall condition.",
+        "## Uncertainty\nIt was uncertain whether a coupled flow and phase-change model could predict the onset location accurately enough to revise the manifold.",
+        "## Hypothesis\nThe team hypothesized that resolving the inlet velocity profile and wall heat flux together would identify the onset mechanism.",
+        "## Analysis performed\nThe team built the coupled model, refined the mesh until the predicted onset location stabilized, and compared it with instrumented runs. The initial model placed onset upstream of the observed vapour mark. Sensitivity analysis showed that contact resistance, not bulk inlet temperature, caused the offset. The model was revised with measured contact resistance and then predicted the observed onset within the width of one sensor.",
+        "## Conclusion and knowledge\nThe analysis established that manifold non-uniformity and local contact resistance interacted to set the boiling onset; the standard uniform-flow correlation was not valid for this architecture.",
+        "## Evidence\nVersioned model files, mesh studies, sensor traces, photographs, and engineering review notes document the hypothesis, analysis, result, and conclusion."
+      ],
+      "expected": {
+        "can_draft": true,
+        "blocked_lines_include": [],
+        "ready_lines_include": ["242", "244", "246"],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "stream_title_excludes": ["Software performance"],
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "complete_without_remaining_uncertainty",
+      "category": "no_year_end_gap",
+      "description": "CRA Line 246 does not require an unresolved year-end uncertainty when advancement is otherwise supported.",
+      "text": [
+        "## Objective\nThe device had to classify two overlapping pulse shapes with at least 95% accuracy and response below 40 ms.",
+        "## Starting technology\nThe existing amplitude threshold achieved 68% accuracy. Published threshold and peak-width methods could not separate pulses that shared both peak and width.",
+        "## Uncertainty\nThe team did not know whether phase-order features could distinguish the pulses within the response limit.",
+        "## Hypothesis\nThe team expected phase order to expose a difference hidden by amplitude and width.",
+        "## Experiments\nThe team tested six feature windows and three classifiers. Long windows reached 97% accuracy but required 71 ms and were rejected. A short phase-order window reached 95.6% accuracy at 34 ms and was selected after repeat testing.",
+        "## Records\nLabelled datasets, test matrices, model versions, latency logs, and source commits record the iterations.",
+        "## Advancement\nThe work established that phase order contained discriminating information absent from amplitude and width, and demonstrated the capability at 95.6% accuracy and 34 ms."
+      ],
+      "expected": {
+        "can_draft": true,
+        "blocked_lines_include": [],
+        "ready_lines_include": ["242", "244", "246"],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "complete_qualitative_objective_without_formula",
+      "category": "qualitative_objective",
+      "description": "A precise qualitative technological objective must not be rejected solely for lacking a numeric threshold.",
+      "text": [
+        "## Objective\nThe team sought a brazed joint that remained continuously bonded after sterilization without edge embrittlement.",
+        "## Existing knowledge\nThe supplier cycle bonded the centre but created a brittle edge. Published brazing guidance did not address the competing thermal path created by the embedded insert.",
+        "## Uncertainty\nIt was unknown whether staged heating could preserve both continuous bonding and a ductile edge around the insert.",
+        "## Hypothesis\nThe team expected a delayed edge-heating stage to prevent early intermetallic growth.",
+        "## Trials and observations\nSeveral stage orders and hold sequences were tested. Centre-first heating retained a ductile edge but left an unbonded crescent. Edge-first heating formed a continuous bond but produced branching brittle fracture. A split stage produced a continuous bond and a ductile, unbroken edge after sterilization. The result was repeated on separate lots.",
+        "## Conclusion\nThe team determined that the insert created two competing thermal paths and that splitting the heat input controlled intermetallic growth at both interfaces.",
+        "## Records\nBatch sheets, thermal traces, labelled cross-sections, fracture notes, procedure revisions, and witness records document each trial."
+      ],
+      "expected": {
+        "can_draft": true,
+        "blocked_lines_include": [],
+        "ready_lines_include": ["242", "244", "246"],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "stream_title_excludes": ["Software performance"],
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "future_plan_presented_as_work",
+      "category": "future_tense",
+      "description": "Planned experiments and projected results must not satisfy claimed-year work or advancement.",
+      "text": [
+        "## Objective\nThe controller is intended to keep vibration below 2 mm/s.",
+        "## Existing approach\nThe current controller reaches 8 mm/s and standard gain tuning cannot maintain stability.",
+        "## Uncertainty\nThe team does not know whether an adaptive observer can meet the target.",
+        "## Planned hypothesis and work\nNext year the team will test five observer designs and will compare vibration, phase margin, and response time. The expected result is 1.8 mm/s, and test logs will be created.",
+        "## Expected advancement\nThe planned work should establish how observer bandwidth affects stability. No prototype, experiment, measurement, or analysis has yet been completed."
+      ],
+      "expected": {
+        "can_draft": false,
+        "blocked_lines_include": ["244", "246"],
+        "ready_lines_include": ["242"],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "business_ab_test_not_technological",
+      "category": "nontechnical_experiment",
+      "description": "An experiment with metrics is not SR&ED evidence when the unknown and learning are commercial rather than technological.",
+      "text": [
+        "## Goal\nThe company wanted to increase checkout conversion from 3% to 4%.",
+        "## Work\nThe team used the existing website platform to test four button colours, three promotional messages, and two page layouts. The winning page reached 4.2% conversion and was deployed.",
+        "## Learning\nThe team learned that customers preferred a green button and shorter promotional copy. Standard analytics and the vendor A/B testing feature performed all allocation and measurement.",
+        "## Records\nCampaign exports and analytics dashboards record the tests. There was no scientific or technological uncertainty, experimental development, or advancement in the underlying software."
+      ],
+      "expected": {
+        "can_draft": false,
+        "blocked_lines_include": ["242", "246"],
+        "ready_lines_include": [],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "allow_generic_stream": true,
+        "prediction_one_of": ["routine", "borderline"]
+      }
+    },
+    {
+      "id": "claimed_year_contains_only_implementation",
+      "category": "tax_year_scope",
+      "description": "Earlier experiments cannot be presented as work performed in the claimed year.",
+      "text": [
+        "## Project background\nIn 2024 the team tested six compensation models and established a history-dependent method that reached 1.7% drift.",
+        "## Claimed fiscal year 2025\nDuring 2025 the team only deployed that completed method, trained operators, and monitored routine production. No hypothesis, experiment, analysis, or technological investigation was performed in 2025.",
+        "## Records\nThe experiment logs are dated in 2024. The 2025 records are deployment tickets and routine monitoring dashboards.",
+        "## Outcome\nProduction remained below 2% drift using the knowledge already established in 2024."
+      ],
+      "expected": {
+        "can_draft": false,
+        "blocked_lines_include": ["242", "244", "246"],
+        "ready_lines_include": [],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "allow_generic_stream": true,
+        "prediction_one_of": ["routine", "borderline", "strong_sred"]
+      }
+    },
+    {
+      "id": "final_result_based_on_recollection",
+      "category": "partial_record_conflict",
+      "description": "Records for early iterations must not validate an unrecorded final result stated from memory.",
+      "text": [
+        "## Objective\nThe process targeted coating variation below 3%.",
+        "## Starting knowledge\nThe standard spray method produced 12% variation and supplier settings could not account for the curved surface.",
+        "## Uncertainty\nThe team did not know whether synchronized nozzle motion could maintain the target.",
+        "## Experiments\nFour paths and three speeds were tested. Early test logs show variation between 5% and 8%, and two paths were abandoned after edge pooling.",
+        "## Alleged final result\nThe project summary says a later synchronized path reached 2.6%, but this value is based only on an employee's recollection. No test file, measurement sheet, path version, date, or raw data for the alleged final run can be produced.",
+        "## Claimed learning\nThe summary claims synchronized acceleration controlled edge pooling."
+      ],
+      "expected": {
+        "can_draft": false,
+        "blocked_lines_include": ["244", "246"],
+        "ready_lines_include": ["242"],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "implicit_two_stream_project",
+      "category": "implicit_multi_stream",
+      "description": "Two linked uncertainties expressed without repeated 'whether' should still be separated.",
+      "text": [
+        "## Objective\nThe instrument required optical drift below 4 micrometres and classification recall above 93% during a 60-minute run.",
+        "## Starting knowledge\nPassive mounting produced 14 micrometres of drift. The static classifier reached 72% recall. Published mounting calculations omitted cyclic heater loading, while standard image features merged the target and background after focus shifted.",
+        "## Uncertainties\nUnknown relationships remained between heater history and lens displacement, and between focus-state sequences and classification reliability.",
+        "## Hypotheses\nThe team expected history-dependent position compensation to control drift. It separately expected focus-state sequences to restore class separation.",
+        "## Optical investigation\nFour mount geometries and five compensation windows were tested. A rigid mount amplified drift and was abandoned. The selected history model reduced drift to 3.1 micrometres.",
+        "## Classification investigation\nThree sequence representations and four classifiers were compared. Static features remained below 80% recall. The selected sequence model reached 94.2% recall.",
+        "## Integrated result and records\nThe integrated run maintained 3.4 micrometres drift and 93.6% recall for 60 minutes. Position traces, image sets, model versions, CAD revisions, test matrices, and decision notes record both investigations.",
+        "## Advancement\nThe team established that heater history governed lens displacement and that focus-state order, not a static focus value, restored classification separation."
+      ],
+      "expected": {
+        "can_draft": true,
+        "blocked_lines_include": [],
+        "ready_lines_include": ["242", "244", "246"],
+        "minimum_streams": 2,
+        "maximum_streams": 2,
+        "allow_generic_stream": false
+      }
+    },
+    {
+      "id": "vendor_proposal_not_company_work",
+      "category": "attribution",
+      "description": "Results quoted from a vendor proposal must not be attributed to the claimant as performed work.",
+      "text": [
+        "## Objective\nThe proposed system would target 99% inspection accuracy at 50 parts per minute.",
+        "## Vendor material\nA vendor proposal states that its prototype tested five lighting geometries and achieved 99.3% accuracy at 54 parts per minute. The proposal describes proprietary experiments, logs, and model revisions performed by the vendor before the company engaged it.",
+        "## Company activity\nThe company purchased the standard system and configured product codes using the manual. Company staff did not design a hypothesis, perform or supervise the vendor experiments, receive the underlying test records, or conduct further experimental work.",
+        "## Outcome\nThe purchased system met the production target after routine setup."
+      ],
+      "expected": {
+        "can_draft": false,
+        "blocked_lines_include": ["242", "244", "246"],
+        "ready_lines_include": [],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "allow_generic_stream": true,
+        "prediction_one_of": ["routine", "borderline"]
+      }
+    },
+    {
+      "id": "technical_analysis_without_physical_test",
+      "category": "analysis_as_investigation",
+      "description": "Systematic mathematical and simulation analysis can support Line 244 without a physical prototype.",
+      "text": [
+        "## Objective\nThe structural method had to predict panel buckling within 5% across the required load envelope.",
+        "## Knowledge base and uncertainty\nPublished closed-form equations assumed isotropic flat panels and differed from observed curved composite behaviour by 22%. The team did not know whether coupling ply orientation, curvature, and boundary compliance could produce a stable predictive method.",
+        "## Hypothesis\nThe hypothesis was that boundary compliance explained most of the prediction error after curvature and ply coupling were included.",
+        "## Systematic analysis\nEngineers constructed a parameterized finite-element model, performed mesh-convergence analysis, varied the three factors independently, and compared predicted modes with archived load-frame data. Curvature alone reduced error to 14%. Ply coupling reduced it to 9%. Adding measured boundary compliance reduced error to 4.2%. Removing compliance returned the error to 10%, supporting the hypothesis.",
+        "## Conclusion and advancement\nThe team concluded that fixture compliance participated in the buckling mode and established a predictive method within 4.2% over the tested envelope.",
+        "## Records\nVersioned simulation files, convergence tables, scripts, archived load traces, mode images, and review notes record the analysis."
+      ],
+      "expected": {
+        "can_draft": true,
+        "blocked_lines_include": [],
+        "ready_lines_include": ["242", "244", "246"],
+        "minimum_streams": 1,
+        "maximum_streams": 1,
+        "stream_title_excludes": ["Software performance"],
+        "allow_generic_stream": false
+      }
+    }
+  ]
+}

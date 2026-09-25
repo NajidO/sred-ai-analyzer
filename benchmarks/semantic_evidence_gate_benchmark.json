@@ -1,0 +1,448 @@
+{
+  "name": "SR&ED Semantic Evidence Gate Adversarial Benchmark",
+  "fixture": {
+    "source_text": "The team sought a controller that held vibration below 2 mm/s.\nAt the start, the existing fixed-gain controller reached 8 mm/s.\nPublished gain-tuning methods assumed a constant load and could not predict the changing-load response.\nIt was unknown whether a load-state observer could preserve stability as the load changed.\nThe team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop.\nDuring 2025, engineers tested four bandwidth schedules under three changing-load profiles.\nThe selected schedule reached 1.8 mm/s, while the fastest schedule became unstable.\nThe team concluded that observer bandwidth had to decrease as estimated load inertia increased.\nThe work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.\nDated test logs, controller versions, vibration traces, and decision notes record the investigation.",
+    "evidence_graph": {
+      "project_summary": "A changing-load vibration-control investigation.",
+      "claimed_tax_year": "2025",
+      "claimed_tax_year_source_quote": "During 2025, engineers tested four bandwidth schedules under three changing-load profiles.",
+      "technical_streams": [
+        {
+          "id": "control_stream",
+          "title": "Changing-load observer stability",
+          "objective": "Hold vibration below 2 mm/s as load changes.",
+          "relationship_to_other_streams": "Single technical stream."
+        }
+      ],
+      "evidence_items": [
+        {
+          "id": "o1",
+          "stream_id": "control_stream",
+          "category": "objective",
+          "source_quote": "The team sought a controller that held vibration below 2 mm/s.",
+          "source_location": "model-hint",
+          "normalized_fact": "The objective was to hold vibration below 2 mm/s.",
+          "certainty": "explicit",
+          "tax_year_scope": "claimed_year",
+          "attribution": "claimant"
+        },
+        {
+          "id": "k1",
+          "stream_id": "control_stream",
+          "category": "existing_knowledge",
+          "source_quote": "At the start, the existing fixed-gain controller reached 8 mm/s.",
+          "source_location": "model-hint",
+          "normalized_fact": "The existing fixed-gain controller reached 8 mm/s.",
+          "certainty": "explicit",
+          "tax_year_scope": "prior_year",
+          "attribution": "claimant"
+        },
+        {
+          "id": "sp1",
+          "stream_id": "control_stream",
+          "category": "standard_practice_limit",
+          "source_quote": "Published gain-tuning methods assumed a constant load and could not predict the changing-load response.",
+          "source_location": "model-hint",
+          "normalized_fact": "Published gain-tuning methods could not predict the changing-load response.",
+          "certainty": "explicit",
+          "tax_year_scope": "prior_year",
+          "attribution": "third_party"
+        },
+        {
+          "id": "u1",
+          "stream_id": "control_stream",
+          "category": "uncertainty",
+          "source_quote": "It was unknown whether a load-state observer could preserve stability as the load changed.",
+          "source_location": "model-hint",
+          "normalized_fact": "It was unknown whether a load-state observer could preserve stability under changing load.",
+          "certainty": "explicit",
+          "tax_year_scope": "claimed_year",
+          "attribution": "claimant"
+        },
+        {
+          "id": "h1",
+          "stream_id": "control_stream",
+          "category": "hypothesis",
+          "source_quote": "The team hypothesized that scheduling observer bandwidth from load state would reduce vibration without destabilizing the loop.",
+          "source_location": "model-hint",
+          "normalized_fact": "The team hypothesized that load-state bandwidth scheduling would reduce vibration without destabilizing the loop.",
+          "certainty": "explicit",
+          "tax_year_scope": "claimed_year",
+          "attribution": "claimant"
+        },
+        {
+          "id": "x1",
+          "stream_id": "control_stream",
+          "category": "experiment_or_analysis",
+          "source_quote": "During 2025, engineers tested four bandwidth schedules under three changing-load profiles.",
+          "source_location": "model-hint",
+          "normalized_fact": "Engineers tested four schedules under three changing-load profiles during 2025.",
+          "certainty": "explicit",
+          "tax_year_scope": "claimed_year",
+          "attribution": "claimant"
+        },
+        {
+          "id": "r1",
+          "stream_id": "control_stream",
+          "category": "result",
+          "source_quote": "The selected schedule reached 1.8 mm/s, while the fastest schedule became unstable.",
+          "source_location": "model-hint",
+          "normalized_fact": "The selected schedule reached 1.8 mm/s and the fastest schedule became unstable.",
+          "certainty": "explicit",
+          "tax_year_scope": "claimed_year",
+          "attribution": "claimant"
+        },
+        {
+          "id": "c1",
+          "stream_id": "control_stream",
+          "category": "conclusion",
+          "source_quote": "The team concluded that observer bandwidth had to decrease as estimated load inertia increased.",
+          "source_location": "model-hint",
+          "normalized_fact": "The team concluded that observer bandwidth had to decrease as estimated load inertia increased.",
+          "certainty": "explicit",
+          "tax_year_scope": "claimed_year",
+          "attribution": "claimant"
+        },
+        {
+          "id": "a1",
+          "stream_id": "control_stream",
+          "category": "advancement",
+          "source_quote": "The work established the relationship between estimated load inertia, observer bandwidth, and closed-loop stability.",
+          "source_location": "model-hint",
+          "normalized_fact": "The work established a relationship among load inertia, observer bandwidth, and stability.",
+          "certainty": "explicit",
+          "tax_year_scope": "claimed_year",
+          "attribution": "claimant"
+        },
+        {
+          "id": "d1",
+          "stream_id": "control_stream",
+          "category": "supporting_record",
+          "source_quote": "Dated test logs, controller versions, vibration traces, and decision notes record the investigation.",
+          "source_location": "model-hint",
+          "normalized_fact": "Dated technical records support the investigation.",
+          "certainty": "explicit",
+          "tax_year_scope": "claimed_year",
+          "attribution": "claimant"
+        }
+      ],
+      "investigation_sequences": [
+        {
+          "id": "observer_sis",
+          "stream_id": "control_stream",
+          "title": "Observer bandwidth scheduling",
+          "uncertainty_evidence_ids": ["u1"],
+          "hypothesis_evidence_ids": ["h1"],
+          "experiment_evidence_ids": ["x1"],
+          "result_evidence_ids": ["r1"],
+          "conclusion_evidence_ids": ["c1"],
+          "advancement_evidence_ids": ["a1"]
+        }
+      ],
+      "contradictions": [],
+      "routine_work": [],
+      "attribution_issues": [],
+      "extraction_notes": []
+    }
+  },
+  "cases": [
+    {
+      "id": "complete_grounded_sequence",
+      "description": "A uniquely grounded year and coherent audited SIS chain are draft-ready.",
+      "audit": {},
+      "expected": {
+        "can_draft": true,
+        "blocked_lines": [],
+        "claimed_tax_year_present": true,
+        "accepted_sequences": 1
+      }
+    },
+    {
+      "id": "missing_claimed_tax_year",
+      "description": "Claimed-year labels cannot substitute for an identified reporting year.",
+      "mutations": [
+        {"op": "set", "path": ["claimed_tax_year"], "value": ""},
+        {"op": "set", "path": ["claimed_tax_year_source_quote"], "value": ""}
+      ],
+      "audit": {},
+      "expected": {
+        "can_draft": false,
+        "blocked_lines": ["242", "244", "246"],
+        "claimed_tax_year_present": false,
+        "accepted_sequences": 1,
+        "question_categories_include": ["claimed_tax_year"]
+      }
+    },
+    {
+      "id": "claimed_year_absent_from_quote",
+      "description": "A model cannot attach a different year to an otherwise valid source quote.",
+      "mutations": [
+        {"op": "set", "path": ["claimed_tax_year"], "value": "2026"}
+      ],
+      "audit": {},
+      "expected": {
+        "can_draft": false,
+        "blocked_lines": ["242", "244", "246"],
+        "claimed_tax_year_present": false,
+        "accepted_sequences": 1,
+        "question_categories_include": ["claimed_tax_year"]
+      }
+    },
+    {
+      "id": "disconnected_evidence_bag",
+      "description": "Category-complete evidence cannot replace a coherent investigation sequence.",
+      "mutations": [
+        {"op": "set", "path": ["investigation_sequences"], "value": []}
+      ],
+      "audit": {},
+      "expected": {
+        "can_draft": false,
+        "blocked_lines": ["244", "246"],
+        "ready_lines_include": ["242"],
+        "claimed_tax_year_present": true,
+        "accepted_sequences": 0,
+        "question_categories_include": ["investigation_sequence"]
+      }
+    },
+    {
+      "id": "mislabeled_sequence_result",
+      "description": "A hypothesis evidence item cannot fill the result link of an SIS chain.",
+      "mutations": [
+        {"op": "set", "path": ["investigation_sequences", 0, "result_evidence_ids"], "value": ["h1"]}
+      ],
+      "audit": {},
+      "expected": {
+        "can_draft": false,
+        "blocked_lines": ["244", "246"],
+        "ready_lines_include": ["242"],
+        "claimed_tax_year_present": true,
+        "accepted_sequences": 0,
+        "minimum_rejected_sequences": 1,
+        "question_categories_include": ["investigation_sequence"]
+      }
+    },
+    {
+      "id": "future_work_in_sequence",
+      "description": "A future experiment cannot support a claimed-year SIS chain.",
+      "mutations": [
+        {"op": "set", "path": ["evidence_items", 5, "tax_year_scope"], "value": "future"}
+      ],
+      "audit": {},
+      "expected": {
+        "can_draft": false,
+        "blocked_lines": ["244", "246"],
+        "ready_lines_include": ["242"],
+        "claimed_tax_year_present": true,
+        "accepted_sequences": 0,
+        "minimum_rejected_sequences": 1
+      }
+    },
+    {
+      "id": "third_party_work_in_sequence",
+      "description": "Third-party work cannot silently become the claimant's SIS chain.",
+      "mutations": [
+        {"op": "set", "path": ["evidence_items", 5, "attribution"], "value": "third_party"}
+      ],
+      "audit": {},
+      "expected": {
+        "can_draft": false,
+        "blocked_lines": ["244", "246"],
+        "ready_lines_include": ["242"],
+        "claimed_tax_year_present": true,
+        "accepted_sequences": 0,
+        "minimum_rejected_sequences": 1,
+        "question_categories_include": ["experiment_or_analysis", "investigation_sequence", "attribution"]
+      }
+    },
+    {
+      "id": "ambiguous_sequence_chronology",
+      "description": "An independent audit can reject chronology even when every evidence category exists.",
+      "audit": {
+        "sequence_overrides": {
+          "SIS1": {
+            "chronology": "ambiguous",
+            "reason": "The source does not establish that the hypothesis preceded the work or caused the conclusion."
+          }
+        }
+      },
+      "expected": {
+        "can_draft": false,
+        "blocked_lines": ["244", "246"],
+        "ready_lines_include": ["242"],
+        "claimed_tax_year_present": true,
+        "accepted_sequences": 0,
+        "minimum_rejected_sequences": 1,
+        "question_categories_include": ["investigation_sequence"]
+      }
+    },
+    {
+      "id": "ambiguous_tax_year_audit",
+      "description": "An independently ambiguous reporting period clears the year and blocks all prose.",
+      "audit": {
+        "tax_year_verdict": "ambiguous",
+        "tax_year_reason": "The passage names a calendar year but does not establish the claimant's reporting period."
+      },
+      "expected": {
+        "can_draft": false,
+        "blocked_lines": ["242", "244", "246"],
+        "claimed_tax_year_present": false,
+        "accepted_sequences": 1,
+        "question_categories_include": ["claimed_tax_year"]
+      }
+    },
+    {
+      "id": "unsupported_model_authored_blocker",
+      "description": "A model-authored attribution blocker cannot survive an independent unsupported verdict.",
+      "mutations": [
+        {
+          "op": "set",
+          "path": ["attribution_issues"],
+          "value": [
+            {
+              "source_quote": "During 2025, engineers tested four bandwidth schedules under three changing-load profiles.",
+              "description": "The source allegedly leaves the performing party unclear.",
+              "blocks_lines": ["244"]
+            }
+          ]
+        }
+      ],
+      "audit": {
+        "issue_overrides": {
+          "A1": {
+            "verdict": "unsupported",
+            "reason": "The quote identifies engineers performing the work and does not support this blocker."
+          }
+        }
+      },
+      "expected": {
+        "can_draft": true,
+        "blocked_lines": [],
+        "claimed_tax_year_present": true,
+        "accepted_sequences": 1
+      }
+    },
+    {
+      "id": "material_line_242_contradiction",
+      "description": "A material contradiction blocks its affected line and therefore withholds the complete report.",
+      "mutations": [
+        {
+          "op": "set",
+          "path": ["contradictions"],
+          "value": [
+            {
+              "id": "conflict_1",
+              "evidence_ids": ["u1", "sp1"],
+              "description": "The uncertainty account conflicts with the stated standard-practice limit.",
+              "blocks_lines": ["242"]
+            }
+          ]
+        }
+      ],
+      "audit": {},
+      "expected": {
+        "can_draft": false,
+        "blocked_lines": ["242"],
+        "ready_lines_include": ["244", "246"],
+        "claimed_tax_year_present": true,
+        "accepted_sequences": 1
+      }
+    }
+  ],
+  "structure_cases": [
+    {
+      "id": "single_tu_single_sis_structure",
+      "description": "One TU and one SIS should remain a concise integrated narrative.",
+      "technical_streams": [
+        {"id": "TU1", "title": "Observer stability"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS1", "stream_id": "TU1"}
+      ],
+      "expected": {
+        "mode": "integrated_narrative",
+        "required_labels_by_line": {"242": [], "244": [], "246": []}
+      }
+    },
+    {
+      "id": "single_tu_multiple_sis_structure",
+      "description": "Multiple investigation paths under one uncertainty require separate SIS sections.",
+      "technical_streams": [
+        {"id": "TU1", "title": "Observer stability"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS1", "stream_id": "TU1"},
+        {"id": "SIS2", "stream_id": "TU1"}
+      ],
+      "expected": {
+        "mode": "hybrid",
+        "required_labels_by_line": {
+          "242": [],
+          "244": ["SIS1", "SIS2"],
+          "246": ["SIS1", "SIS2"]
+        }
+      }
+    },
+    {
+      "id": "two_distinct_tu_structure",
+      "description": "Distinct uncertainty streams without shared context require split TU/SIS sections.",
+      "technical_streams": [
+        {"id": "TU1", "title": "Observer stability"},
+        {"id": "TU2", "title": "Sensor reconstruction"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS1", "stream_id": "TU1"},
+        {"id": "SIS2", "stream_id": "TU2"}
+      ],
+      "expected": {
+        "mode": "split_by_uncertainty_stream",
+        "required_labels_by_line": {
+          "242": ["TU1", "TU2"],
+          "244": ["SIS1", "SIS2"],
+          "246": ["TU1", "TU2"]
+        }
+      }
+    },
+    {
+      "id": "two_tu_shared_context_structure",
+      "description": "Shared starting knowledge should be stated once before separate TU/SIS sections.",
+      "technical_streams": [
+        {"id": "TU1", "title": "Observer stability"},
+        {"id": "TU2", "title": "Sensor reconstruction"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS1", "stream_id": "TU1"},
+        {"id": "SIS2", "stream_id": "TU2"}
+      ],
+      "global_context_categories": ["existing_knowledge", "supporting_record"],
+      "expected": {
+        "mode": "hybrid",
+        "required_labels_by_line": {
+          "242": ["TU1", "TU2"],
+          "244": ["SIS1", "SIS2"],
+          "246": ["TU1", "TU2"]
+        }
+      }
+    },
+    {
+      "id": "preserve_extracted_stream_order",
+      "description": "The structure plan must preserve evidence-graph stream and sequence order.",
+      "technical_streams": [
+        {"id": "TU2", "title": "Sensor reconstruction"},
+        {"id": "TU1", "title": "Observer stability"}
+      ],
+      "investigation_sequences": [
+        {"id": "SIS2", "stream_id": "TU2"},
+        {"id": "SIS1", "stream_id": "TU1"}
+      ],
+      "expected": {
+        "mode": "split_by_uncertainty_stream",
+        "stream_order": ["TU2", "TU1"],
+        "required_labels_by_line": {
+          "242": ["TU2", "TU1"],
+          "244": ["SIS2", "SIS1"],
+          "246": ["TU2", "TU1"]
+        }
+      }
+    }
+  ]
+}
